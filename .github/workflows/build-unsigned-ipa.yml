@@ -23,32 +23,36 @@ jobs:
       - name: Prebuild iOS
         run: npx expo prebuild --platform ios --clean
 
-      - name: 🔍 Debug - List iOS files (查看实际生成的 workspace 和 scheme)
-        run: |
-          ls -la ios/
-          echo "=== .xcworkspace files ==="
-          ls -la ios/*.xcworkspace 2>/dev/null || echo "No .xcworkspace found"
-          echo "=== .xcodeproj files ==="
-          ls -la ios/*.xcodeproj 2>/dev/null || echo "No .xcodeproj found"
-
       - name: Install CocoaPods
         run: |
           cd ios
           pod install --repo-update
 
-      - name: 🔍 Debug - List after pod install
+      - name: 🔍 Debug - Show iOS structure
         run: |
-          ls -la ios/
+          cd ios
+          echo "=== Files in ios/ ==="
+          ls -la
+          echo "=== .xcworkspace ==="
+          ls -la *.xcworkspace 2>/dev/null || echo "No xcworkspace"
+          echo "=== .xcodeproj ==="
+          ls -la *.xcodeproj 2>/dev/null || echo "No xcodeproj"
 
       - name: Build Unsigned IPA
         run: |
           cd ios
-          # 自动获取 workspace 和 scheme 名称
-          WORKSPACE=$(ls *.xcworkspace | head -n 1)
+          
+          # 正确获取 workspace 和 scheme
+          WORKSPACE=$(ls -d *.xcworkspace 2>/dev/null | head -n 1)
+          if [ -z "$WORKSPACE" ]; then
+            echo "❌ No .xcworkspace found!"
+            exit 1
+          fi
+          
           SCHEME=$(basename "$WORKSPACE" .xcworkspace)
           
-          echo "Using workspace: $WORKSPACE"
-          echo "Using scheme: $SCHEME"
+          echo "✅ Using workspace: $WORKSPACE"
+          echo "✅ Using scheme: $SCHEME"
           
           xcodebuild \
             -workspace "$WORKSPACE" \
@@ -59,7 +63,8 @@ jobs:
             CODE_SIGNING_ALLOWED=NO \
             CODE_SIGNING_REQUIRED=NO \
             CODE_SIGN_IDENTITY="" \
-            CODE_SIGN_STYLE=Manual
+            CODE_SIGN_STYLE=Manual \
+            | xcpretty || true
 
       - name: Export Unsigned IPA
         run: |
