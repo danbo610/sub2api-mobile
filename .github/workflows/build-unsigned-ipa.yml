@@ -28,15 +28,12 @@ jobs:
           cd ios
           pod install --repo-update
 
-      - name: 🔍 Debug - iOS Structure
+      - name: 🔍 Debug - Project Structure
         run: |
           cd ios
-          echo "=== ios/ 文件列表 ==="
           ls -la
-          echo "=== xcworkspace ==="
-          ls -la *.xcworkspace 2>/dev/null || echo "No xcworkspace"
 
-      - name: Build Archive
+      - name: Build .app (Debug)
         run: |
           cd ios
           WORKSPACE=$(ls -d *.xcworkspace 2>/dev/null | head -n 1)
@@ -45,47 +42,48 @@ jobs:
           echo "Using workspace: $WORKSPACE"
           echo "Using scheme: $SCHEME"
           
-          xcodebuild \
+          xcodebuild build \
             -workspace "$WORKSPACE" \
             -scheme "$SCHEME" \
             -configuration Debug \
             -sdk iphoneos \
-            -archivePath ../build/sub2api-mobile.xcarchive \
+            -destination 'generic/platform=iOS' \
             CODE_SIGNING_ALLOWED=NO \
             CODE_SIGNING_REQUIRED=NO \
             CODE_SIGN_IDENTITY="" \
             CODE_SIGN_STYLE=Manual \
-            | xcpretty || echo "xcodebuild finished with warnings"
+            ONLY_ACTIVE_ARCH=NO \
+            | xcpretty || echo "Build completed with warnings"
 
-      - name: 🔍 Debug - Check Archive Output
+      - name: 🔍 Debug - Find .app
         run: |
-          echo "=== build/ 目录内容 ==="
-          ls -la build/ 2>/dev/null || echo "build/ not found"
-          echo "=== xcarchive 内容 ==="
-          ls -la build/sub2api-mobile.xcarchive/ 2>/dev/null || echo "xcarchive not generated"
-          ls -la build/sub2api-mobile.xcarchive/Products/Applications/ 2>/dev/null || echo "Applications/ not found"
+          echo "=== Searching for .app file ==="
+          find ~/Library/Developer/Xcode/DerivedData -name "*.app" -type d | head -10 || echo "No .app found"
+          echo "=== ios/build folder ==="
+          ls -la ios/build 2>/dev/null || echo "No ios/build"
 
-      - name: Export Unsigned IPA
+      - name: Package Unsigned IPA
         run: |
-          ARCHIVE_PATH="build/sub2api-mobile.xcarchive"
-          if [ ! -d "$ARCHIVE_PATH" ]; then
-            echo "❌ xcarchive not found! Check previous debug step."
-            exit 1
-          fi
+          # 查找生成的 .app
+          APP_PATH=$(find ~/Library/Developer/Xcode/DerivedData -name "sub2apimobile.app" -type d | head -n 1)
           
-          APP_PATH=$(find "$ARCHIVE_PATH/Products/Applications" -name "*.app" | head -n 1)
           if [ -z "$APP_PATH" ]; then
-            echo "❌ .app not found inside archive!"
+            echo "❌ Could not find .app! Trying alternative location..."
+            APP_PATH=$(find . -name "*.app" -type d | head -n 1)
+          fi
+          
+          if [ -z "$APP_PATH" ]; then
+            echo "❌ .app not found. Check debug logs."
             exit 1
           fi
           
-          echo "Found app: $APP_PATH"
+          echo "✅ Found app: $APP_PATH"
           
-          cd build
           mkdir -p Payload
-          cp -r "${APP_PATH}" Payload/
+          cp -r "$APP_PATH" Payload/
           zip -r sub2api-mobile-unsigned.ipa Payload
-          mv sub2api-mobile-unsigned.ipa $GITHUB_WORKSPACE/
+          
+          echo "✅ IPA created successfully!"
 
       - name: Upload IPA
         uses: actions/upload-artifact@v4
