@@ -28,31 +28,22 @@ jobs:
           cd ios
           pod install --repo-update
 
-      - name: 🔍 Debug - Show iOS structure
+      - name: 🔍 Debug - iOS Structure
         run: |
           cd ios
-          echo "=== Files in ios/ ==="
+          echo "=== ios/ 文件列表 ==="
           ls -la
-          echo "=== .xcworkspace ==="
+          echo "=== xcworkspace ==="
           ls -la *.xcworkspace 2>/dev/null || echo "No xcworkspace"
-          echo "=== .xcodeproj ==="
-          ls -la *.xcodeproj 2>/dev/null || echo "No xcodeproj"
 
-      - name: Build Unsigned IPA
+      - name: Build Archive
         run: |
           cd ios
-          
-          # 正确获取 workspace 和 scheme
           WORKSPACE=$(ls -d *.xcworkspace 2>/dev/null | head -n 1)
-          if [ -z "$WORKSPACE" ]; then
-            echo "❌ No .xcworkspace found!"
-            exit 1
-          fi
-          
           SCHEME=$(basename "$WORKSPACE" .xcworkspace)
           
-          echo "✅ Using workspace: $WORKSPACE"
-          echo "✅ Using scheme: $SCHEME"
+          echo "Using workspace: $WORKSPACE"
+          echo "Using scheme: $SCHEME"
           
           xcodebuild \
             -workspace "$WORKSPACE" \
@@ -64,13 +55,35 @@ jobs:
             CODE_SIGNING_REQUIRED=NO \
             CODE_SIGN_IDENTITY="" \
             CODE_SIGN_STYLE=Manual \
-            | xcpretty || true
+            | xcpretty || echo "xcodebuild finished with warnings"
+
+      - name: 🔍 Debug - Check Archive Output
+        run: |
+          echo "=== build/ 目录内容 ==="
+          ls -la build/ 2>/dev/null || echo "build/ not found"
+          echo "=== xcarchive 内容 ==="
+          ls -la build/sub2api-mobile.xcarchive/ 2>/dev/null || echo "xcarchive not generated"
+          ls -la build/sub2api-mobile.xcarchive/Products/Applications/ 2>/dev/null || echo "Applications/ not found"
 
       - name: Export Unsigned IPA
         run: |
-          cd build/sub2api-mobile.xcarchive/Products/Applications
+          ARCHIVE_PATH="build/sub2api-mobile.xcarchive"
+          if [ ! -d "$ARCHIVE_PATH" ]; then
+            echo "❌ xcarchive not found! Check previous debug step."
+            exit 1
+          fi
+          
+          APP_PATH=$(find "$ARCHIVE_PATH/Products/Applications" -name "*.app" | head -n 1)
+          if [ -z "$APP_PATH" ]; then
+            echo "❌ .app not found inside archive!"
+            exit 1
+          fi
+          
+          echo "Found app: $APP_PATH"
+          
+          cd build
           mkdir -p Payload
-          cp -r *.app Payload/
+          cp -r "${APP_PATH}" Payload/
           zip -r sub2api-mobile-unsigned.ipa Payload
           mv sub2api-mobile-unsigned.ipa $GITHUB_WORKSPACE/
 
