@@ -1,0 +1,58 @@
+name: Build Unsigned iOS IPA for TrollStore
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: macos-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Prebuild iOS
+        run: npx expo prebuild --platform ios --clean
+
+      - name: Install CocoaPods
+        run: |
+          cd ios
+          pod install --repo-update
+
+      - name: Build Unsigned IPA
+        run: |
+          cd ios
+          xcodebuild \
+            -workspace sub2api-mobile.xcworkspace \
+            -scheme sub2api-mobile \
+            -configuration Debug \
+            -sdk iphoneos \
+            -archivePath ../build/sub2api-mobile.xcarchive \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
+            CODE_SIGN_STYLE=Manual
+
+      - name: Export Unsigned IPA
+        run: |
+          cd build/sub2api-mobile.xcarchive/Products/Applications
+          mkdir -p Payload
+          cp -r sub2api-mobile.app Payload/
+          zip -r sub2api-mobile-unsigned.ipa Payload
+          mv sub2api-mobile-unsigned.ipa $GITHUB_WORKSPACE/
+
+      - name: Upload IPA
+        uses: actions/upload-artifact@v4
+        with:
+          name: sub2api-mobile-unsigned-ipa
+          path: sub2api-mobile-unsigned.ipa
+          retention-days: 7
