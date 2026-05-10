@@ -1,4 +1,4 @@
-name: Build Unsigned iOS IPA for TrollStore
+name: Build Unsigned iOS IPA for TrollStore (Release)
 
 on:
   workflow_dispatch:
@@ -28,12 +28,7 @@ jobs:
           cd ios
           pod install --repo-update
 
-      - name: 🔍 Debug - Project Structure
-        run: |
-          cd ios
-          ls -la
-
-      - name: Build .app (Debug)
+      - name: Build Release .app (Production)
         run: |
           cd ios
           WORKSPACE=$(ls -d *.xcworkspace 2>/dev/null | head -n 1)
@@ -45,7 +40,7 @@ jobs:
           xcodebuild build \
             -workspace "$WORKSPACE" \
             -scheme "$SCHEME" \
-            -configuration Debug \
+            -configuration Release \
             -sdk iphoneos \
             -destination 'generic/platform=iOS' \
             CODE_SIGNING_ALLOWED=NO \
@@ -55,25 +50,12 @@ jobs:
             ONLY_ACTIVE_ARCH=NO \
             | xcpretty || echo "Build completed with warnings"
 
-      - name: 🔍 Debug - Find .app
-        run: |
-          echo "=== Searching for .app file ==="
-          find ~/Library/Developer/Xcode/DerivedData -name "*.app" -type d | head -10 || echo "No .app found"
-          echo "=== ios/build folder ==="
-          ls -la ios/build 2>/dev/null || echo "No ios/build"
-
       - name: Package Unsigned IPA
         run: |
-          # 查找生成的 .app
           APP_PATH=$(find ~/Library/Developer/Xcode/DerivedData -name "sub2apimobile.app" -type d | head -n 1)
           
           if [ -z "$APP_PATH" ]; then
-            echo "❌ Could not find .app! Trying alternative location..."
-            APP_PATH=$(find . -name "*.app" -type d | head -n 1)
-          fi
-          
-          if [ -z "$APP_PATH" ]; then
-            echo "❌ .app not found. Check debug logs."
+            echo "❌ .app not found. Check logs."
             exit 1
           fi
           
@@ -83,7 +65,7 @@ jobs:
           cp -r "$APP_PATH" Payload/
           zip -r sub2api-mobile-unsigned.ipa Payload
           
-          echo "✅ IPA created successfully!"
+          echo "✅ Production IPA created successfully!"
 
       - name: Upload IPA
         uses: actions/upload-artifact@v4
