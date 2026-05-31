@@ -6,6 +6,8 @@ import {
   buildDailyUsageRows,
   getApiKeyUsageDateRange,
   getTopApiKeyUsageRows,
+  formatIpLocation,
+  formatReasoningEffort,
   sortApiKeysByLastUsedDesc,
   toTimeValue,
 } from '../src/lib/api-key-usage';
@@ -127,5 +129,18 @@ describe('api key usage helpers', () => {
     );
 
     assert.deepEqual(rows.map((row) => row.id), [3, 2]);
+  });
+
+  it('formats reasoning effort consistently with the native admin UI labels', () => {
+    assert.equal(formatReasoningEffort('low'), 'Low');
+    assert.equal(formatReasoningEffort('extra-high'), 'XHigh');
+    assert.equal(formatReasoningEffort('minimal'), '--');
+    assert.equal(formatReasoningEffort('custom'), 'Custom');
+  });
+
+  it('formats IP location from direct value or location parts', () => {
+    assert.equal(formatIpLocation({ ip_location: 'Japan / Tokyo' }), 'Japan / Tokyo');
+    assert.equal(formatIpLocation({ country: 'US', region: 'California', city: 'San Jose' }), 'US/California');
+    assert.equal(formatIpLocation({}), '--');
   });
 });

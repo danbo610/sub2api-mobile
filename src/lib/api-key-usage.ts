@@ -151,6 +151,55 @@ export function getTopApiKeyUsageRows<T extends UsageMetricTotals>(rows: T[], li
     .slice(0, limit);
 }
 
+export function formatReasoningEffort(effort?: string | null) {
+  const raw = String(effort ?? '').trim();
+  if (!raw) return '--';
+
+  const normalized = raw.toLowerCase().replace(/[-_\s]/g, '');
+
+  switch (normalized) {
+    case 'low':
+      return 'Low';
+    case 'medium':
+      return 'Medium';
+    case 'high':
+      return 'High';
+    case 'xhigh':
+    case 'extrahigh':
+      return 'XHigh';
+    case 'max':
+      return 'Max';
+    case 'none':
+    case 'minimal':
+      return '--';
+    default:
+      return raw.length > 1 ? `${raw[0].toUpperCase()}${raw.slice(1)}` : raw.toUpperCase();
+  }
+}
+
+export function formatIpLocation(input?: {
+  ip_location?: string | null;
+  country?: string | null;
+  country_code?: string | null;
+  region?: string | null;
+  city?: string | null;
+} | null) {
+  if (!input) return '--';
+
+  const direct = input.ip_location?.trim();
+  if (direct) return direct;
+
+  const parts = [input.country, input.region]
+    .filter((value) => typeof value === 'string' && value.trim())
+    .map((value) => value!.trim());
+
+  if (parts.length > 0) {
+    return parts.join('/');
+  }
+
+  return '--';
+}
+
 export function toTimeValue(value?: string | null) {
   if (!value) return 0;
   const time = new Date(value).getTime();

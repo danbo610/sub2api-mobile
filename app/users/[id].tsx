@@ -6,9 +6,20 @@ import { Alert, Pressable, ScrollView, Text, TextInput, View } from 'react-nativ
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { LineTrendChart } from '@/src/components/line-trend-chart';
-import { API_KEY_USAGE_BATCH_SIZE, sortApiKeysByLastUsedDesc } from '@/src/lib/api-key-usage';
-import { getApiKeyUsageSummary, getDashboardSnapshot, getUsageStats, getUser, listUserApiKeys, updateUserBalance, updateUserStatus, type ApiKeyUsageSummary } from '@/src/services/admin';
-import type { AdminApiKey, BalanceOperation, UsageStats } from '@/src/types/admin';
+import { API_KEY_USAGE_BATCH_SIZE, formatIpLocation, formatReasoningEffort, sortApiKeysByLastUsedDesc } from '@/src/lib/api-key-usage';
+import {
+  getApiKeyUsageSummary,
+  getDashboardSnapshot,
+  getLatestApiKeyUsageLog,
+  getUsageStats,
+  getUser,
+  listUserApiKeys,
+  updateUserBalance,
+  updateUserStatus,
+  type ApiKeyUsageSummary,
+} from '@/src/services/admin';
+import { getIpInfo, type IpInfoResponse } from '@/src/services/ipinfo';
+import type { AdminApiKey, AdminUsageLog, BalanceOperation, UsageStats } from '@/src/types/admin';
 
 const colors = {
   page: '#f4efe4',
@@ -97,17 +108,6 @@ function formatTokenValue(value?: number | null) {
 }
 
 
-function formatQuotaUsage(quotaUsed?: number | null, quota?: number | null) {
-  const used = Number(quotaUsed ?? 0);
-  const limit = Number(quota ?? 0);
-
-  if (limit <= 0) {
-    return '∞';
-  }
-
-  return `${used}`;
-}
-
 function formatTime(value?: string | null) {
   if (!value) return '--';
 
@@ -122,6 +122,20 @@ function formatTime(value?: string | null) {
   const seconds = `${date.getSeconds()}`.padStart(2, '0');
 
   return `${year}/${month}/${day} ${hours}:${minutes}:${seconds}`;
+}
+
+function formatModel(log?: AdminUsageLog | null) {
+  if (!log) return '--';
+
+  if (log.model_mapping_chain?.includes('→')) {
+    return log.model_mapping_chain;
+  }
+
+  if (log.upstream_model && log.model && log.upstream_model !== log.model) {
+    return `${log.model} → ${log.upstream_model}`;
+  }
+
+  return log.model || '--';
 }
 
 function Section({ title, children }: { title: string; children: React.ReactNode }) {
@@ -218,6 +232,121 @@ function CopyInlineButton({ copied, onPress }: { copied: boolean; onPress: () =>
   );
 }
 
+function DetailButton({ expanded, onPress }: { expanded: boolean; onPress: () => void }) {
+  return (
+    <Pressable
+      onPress={onPress}
+      style={({ pressed }) => ({
+        alignSelf: 'flex-start',
+        backgroundColor: expanded ? colors.primary : colors.border,
+        borderRadius: 999,
+        paddingHorizontal: 12,
+        paddingVertical: 7,
+        opacity: pressed ? 0.78 : 1,
+      })}
+    >
+      <Text style={{ fontSize: 12, fontWeight: '700', color: expanded ? '#fff' : '#4e463e' }}>{expanded ? '收起' : '详情'}</Text>
+    </Pressable>
+  );
+}
+
+function DetailField({ label, value, mono, wide }: { label: string; value: string; mono?: boolean; wide?: boolean }) {
+  return (
+    <View
+      style={{
+        width: wide ? '100%' : '48.5%',
+        backgroundColor: colors.card,
+        borderRadius: 12,
+        paddingHorizontal: 11,
+        paddingVertical: 10,
+        borderWidth: 1,
+        borderColor: colors.border,
+      }}
+    >
+      <Text style={{ fontSize: 11, color: colors.subtext }}>{label}</Text>
+      <Text
+        style={{
+          marginTop: 5,
+          fontSize: 13,
+          lineHeight: 18,
+          fontWeight: wide ? '500' : '700',
+          color: colors.text,
+          fontFamily: mono ? 'monospace' : undefined,
+        }}
+      >
+        {value || '--'}
+      </Text>
+    </View>
+  );
+}
+
+function getIpLocationDisplay(log?: AdminUsageLog | null, ipInfo?: IpInfoResponse | null) {
+  const ipInfoLocation = formatIpLocation(ipInfo);
+  if (ipInfoLocation !== '--') return ipInfoLocation;
+
+  return formatIpLocation(log);
+}
+
+function LatestAccessDetails({
+  log,
+  ipInfo,
+  ipLocationLoading,
+  ipLocationError,
+  loading,
+  error,
+}: {
+  log?: AdminUsageLog | null;
+  ipInfo?: IpInfoResponse | null;
+  ipLocationLoading?: boolean;
+  ipLocationError?: boolean;
+  loading?: boolean;
+  error?: boolean;
+}) {
+  if (loading) {
+    return (
+      <View style={{ marginTop: 12, backgroundColor: colors.card, borderRadius: 12, padding: 12, borderWidth: 1, borderColor: colors.border }}>
+        <Text style={{ fontSize: 13, color: colors.subtext }}>正在加载最后一次访问详情...</Text>
+      </View>
+    );
+  }
+
+  if (error) {
+    return (
+      <View style={{ marginTop: 12, backgroundColor: colors.errorBg, borderRadius: 12, padding: 12 }}>
+        <Text style={{ fontSize: 13, color: colors.errorText }}>最后一次访问详情加载失败</Text>
+      </View>
+    );
+  }
+
+  if (!log) {
+    return (
+      <View style={{ marginTop: 12, backgroundColor: colors.card, borderRadius: 12, padding: 12, borderWidth: 1, borderColor: colors.border }}>
+        <Text style={{ fontSize: 13, color: colors.subtext }}>暂无访问记录。</Text>
+      </View>
+    );
+  }
+
+  return (
+    <View style={{ marginTop: 12, backgroundColor: '#efe8dc', borderRadius: 14, padding: 12, borderWidth: 1, borderColor: colors.border }}>
+      <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', gap: 10 }}>
+        <Text style={{ fontSize: 14, fontWeight: '700', color: colors.text }}>最后一次访问详情</Text>
+        <Text style={{ fontSize: 11, color: colors.subtext }}>{formatTime(log.created_at)}</Text>
+      </View>
+
+      <View style={{ flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'space-between', rowGap: 8, marginTop: 10 }}>
+        <DetailField label="模型" value={formatModel(log)} />
+        <DetailField label="推理强度" value={formatReasoningEffort(log.reasoning_effort)} />
+        <DetailField label="IP地址" value={log.ip_address || '--'} mono />
+        <DetailField
+          label="IP归属地"
+          value={ipLocationLoading ? '加载中' : ipLocationError ? getIpLocationDisplay(log) : getIpLocationDisplay(log, ipInfo)}
+        />
+        <DetailField label="User-Agent" value={log.user_agent || '--'} wide />
+      </View>
+    </View>
+  );
+}
+
 function KeyItem({
   item,
   copied,
@@ -227,6 +356,14 @@ function KeyItem({
   usageLoading,
   usageError,
   onPressMonthUsage,
+  detailsExpanded,
+  onToggleDetails,
+  latestAccessLog,
+  latestAccessIpInfo,
+  latestAccessLoading,
+  latestAccessError,
+  latestAccessIpInfoLoading,
+  latestAccessIpInfoError,
 }: {
   item: AdminApiKey;
   copied: boolean;
@@ -236,6 +373,14 @@ function KeyItem({
   usageLoading?: boolean;
   usageError?: boolean;
   onPressMonthUsage: () => void;
+  detailsExpanded: boolean;
+  onToggleDetails: () => void;
+  latestAccessLog?: AdminUsageLog | null;
+  latestAccessIpInfo?: IpInfoResponse | null;
+  latestAccessLoading?: boolean;
+  latestAccessError?: boolean;
+  latestAccessIpInfoLoading?: boolean;
+  latestAccessIpInfoError?: boolean;
 }) {
   return (
     <View
@@ -269,14 +414,27 @@ function KeyItem({
 
       <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', gap: 12, marginTop: 12 }}>
         <View style={{ flex: 1 }}>
-          <Text style={{ fontSize: 11, color: colors.subtext }}>已用额度</Text>
-          <Text style={{ marginTop: 4, fontSize: 16, fontWeight: '700', color: colors.text }}>{formatQuotaUsage(item.quota_used, item.quota)}</Text>
+          <Text style={{ fontSize: 11, color: colors.subtext }}>访问属性</Text>
+          <View style={{ marginTop: 5 }}>
+            <DetailButton expanded={detailsExpanded} onPress={onToggleDetails} />
+          </View>
         </View>
         <View style={{ flex: 1, alignItems: 'flex-end' }}>
           <Text style={{ fontSize: 11, color: colors.subtext }}>最后使用时间</Text>
           <Text style={{ marginTop: 4, fontSize: 13, color: colors.subtext }}>{formatTime(item.last_used_at)}</Text>
         </View>
       </View>
+
+      {detailsExpanded ? (
+        <LatestAccessDetails
+          log={latestAccessLog}
+          ipInfo={latestAccessIpInfo}
+          ipLocationLoading={latestAccessIpInfoLoading}
+          ipLocationError={latestAccessIpInfoError}
+          loading={latestAccessLoading}
+          error={latestAccessError}
+        />
+      ) : null}
     </View>
   );
 }
@@ -295,6 +453,7 @@ export default function UserDetailScreen() {
   const [copiedKeyId, setCopiedKeyId] = useState<number | null>(null);
   const [keyUsageById, setKeyUsageById] = useState<Record<number, ApiKeyUsageSummary>>({});
   const [loadingKeyUsageIds, setLoadingKeyUsageIds] = useState<Record<number, boolean>>({});
+  const [expandedKeyDetailId, setExpandedKeyDetailId] = useState<number | null>(null);
   const loadedKeyUsageSignatureRef = useRef('');
   const [rangeKey, setRangeKey] = useState<RangeKey>('7d');
   const range = getDateRange(rangeKey);
@@ -376,6 +535,21 @@ export default function UserDetailScreen() {
       });
   }, [apiKeys, searchText]);
   const filteredApiKeyIds = useMemo(() => filteredApiKeys.map((item) => item.id), [filteredApiKeys]);
+
+  const latestAccessQuery = useQuery({
+    queryKey: ['api-key-latest-access', userId, expandedKeyDetailId],
+    queryFn: () => getLatestApiKeyUsageLog({ userId, apiKeyId: expandedKeyDetailId as number }),
+    enabled: Number.isFinite(userId) && typeof expandedKeyDetailId === 'number',
+    staleTime: 30_000,
+  });
+  const latestAccessIp = latestAccessQuery.data?.ip_address?.trim();
+  const latestAccessIpInfoQuery = useQuery({
+    queryKey: ['ipinfo', latestAccessIp],
+    queryFn: () => getIpInfo(latestAccessIp as string),
+    enabled: Boolean(expandedKeyDetailId && latestAccessIp),
+    staleTime: 10 * 60_000,
+    retry: 1,
+  });
 
   useEffect(() => {
     const signature = [
@@ -476,6 +650,10 @@ export default function UserDetailScreen() {
     setTimeout(() => {
       setCopiedKeyId((current) => (current === item.id ? null : current));
     }, 1500);
+  }
+
+  function toggleKeyDetails(apiKeyId: number) {
+    setExpandedKeyDetailId((current) => (current === apiKeyId ? null : apiKeyId));
   }
 
   function handleToggleUserStatus() {
@@ -686,6 +864,14 @@ export default function UserDetailScreen() {
                         monthUsage={usage?.month}
                         usageLoading={loadingKeyUsageIds[item.id] ?? !usage}
                         usageError={Boolean(usage?.todayError || usage?.monthError)}
+                        detailsExpanded={expandedKeyDetailId === item.id}
+                        onToggleDetails={() => toggleKeyDetails(item.id)}
+                        latestAccessLog={expandedKeyDetailId === item.id ? latestAccessQuery.data : undefined}
+                        latestAccessIpInfo={expandedKeyDetailId === item.id ? latestAccessIpInfoQuery.data : undefined}
+                        latestAccessLoading={expandedKeyDetailId === item.id && latestAccessQuery.isLoading}
+                        latestAccessError={expandedKeyDetailId === item.id && Boolean(latestAccessQuery.error)}
+                        latestAccessIpInfoLoading={expandedKeyDetailId === item.id && Boolean(latestAccessIp) && latestAccessIpInfoQuery.isLoading}
+                        latestAccessIpInfoError={expandedKeyDetailId === item.id && Boolean(latestAccessIpInfoQuery.error)}
                         onPressMonthUsage={() =>
                           router.push({
                             pathname: '/users/[id]/api-keys/[keyId]',

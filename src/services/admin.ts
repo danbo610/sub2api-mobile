@@ -5,6 +5,7 @@ import type {
   AdminApiKey,
   AdminGroup,
   AdminSettings,
+  AdminUsageLog,
   AdminUser,
   BalanceOperation,
   DashboardModelStats,
@@ -91,6 +92,60 @@ export function getUsageStats(params: {
   billing_type?: string | null;
 }) {
   return adminFetch<UsageStats>(`/api/v1/admin/usage/stats${buildQuery(params)}`);
+}
+
+export function listAdminUsageLogs(params: {
+  page?: number;
+  page_size?: number;
+  user_id?: number;
+  api_key_id?: number;
+  account_id?: number;
+  group_id?: number;
+  model?: string;
+  request_type?: string;
+  billing_type?: string | null;
+  billing_mode?: string | null;
+  start_date?: string;
+  end_date?: string;
+  timezone?: string;
+  sort_by?: string;
+  sort_order?: 'asc' | 'desc';
+  exact_total?: boolean;
+}) {
+  return adminFetch<PaginatedData<AdminUsageLog>>(
+    `/api/v1/admin/usage${buildQuery({
+      page: params.page ?? 1,
+      page_size: params.page_size ?? 20,
+      user_id: params.user_id,
+      api_key_id: params.api_key_id,
+      account_id: params.account_id,
+      group_id: params.group_id,
+      model: params.model,
+      request_type: params.request_type,
+      billing_type: params.billing_type,
+      billing_mode: params.billing_mode,
+      start_date: params.start_date,
+      end_date: params.end_date,
+      timezone: params.timezone,
+      sort_by: params.sort_by,
+      sort_order: params.sort_order,
+      exact_total: params.exact_total,
+    })}`
+  );
+}
+
+export async function getLatestApiKeyUsageLog(params: { userId: number; apiKeyId: number }) {
+  const result = await listAdminUsageLogs({
+    page: 1,
+    page_size: 1,
+    user_id: params.userId,
+    api_key_id: params.apiKeyId,
+    sort_by: 'created_at',
+    sort_order: 'desc',
+    exact_total: false,
+  });
+
+  return result.items?.[0] ?? null;
 }
 
 export type ApiKeyUsageSummary = {

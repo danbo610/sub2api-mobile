@@ -84,6 +84,31 @@ export type UsageStats = {
   average_duration_ms?: number;
 };
 
+export type AdminUsageLog = {
+  id: number;
+  user_id: number;
+  api_key_id: number;
+  account_id?: number | null;
+  request_id?: string | null;
+  model?: string | null;
+  upstream_model?: string | null;
+  model_mapping_chain?: string | null;
+  reasoning_effort?: string | null;
+  inbound_endpoint?: string | null;
+  upstream_endpoint?: string | null;
+  request_type?: string | null;
+  stream?: boolean;
+  user_agent?: string | null;
+  ip_address?: string | null;
+  ip_location?: string | null;
+  country?: string | null;
+  country_code?: string | null;
+  region?: string | null;
+  city?: string | null;
+  created_at?: string;
+  api_key?: AdminApiKey;
+};
+
 export type DashboardSnapshot = {
   stats?: UsageStats & {
     cost?: number;
