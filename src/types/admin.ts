@@ -220,6 +220,7 @@ export type AdminAccount = {
   current_concurrency?: number;
   rate_multiplier?: number;
   error_message?: string;
+  created_at?: string;
   updated_at?: string;
   last_used_at?: string | null;
   group_ids?: number[];

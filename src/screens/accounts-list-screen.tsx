@@ -7,14 +7,14 @@ import type { Edge } from 'react-native-safe-area-context';
 import { ListCard } from '@/src/components/list-card';
 import { ScreenShell } from '@/src/components/screen-shell';
 import { useDebouncedValue } from '@/src/hooks/use-debounced-value';
-import { getAccountError, getAccountVisualStatus, type AccountStatusFilter } from '@/src/lib/account-status';
+import { getAccountError, getAccountErrorMessage, getAccountVisualStatus, type AccountStatusFilter } from '@/src/lib/account-status';
 import {
   formatRelativeTime,
   formatUsageWindowReset,
   getAccountUsageWindows,
   isUsageWindowLimited,
 } from '@/src/lib/account-usage';
-import { formatTokenValue } from '@/src/lib/formatters';
+import { formatDisplayTime, formatTokenValue } from '@/src/lib/formatters';
 import { getAccountTodayStats, listAccounts, setAccountSchedulable, testAccount } from '@/src/services/admin';
 
 type UsageSort = 'usage-desc' | 'usage-asc';
@@ -177,7 +177,11 @@ export function AccountsListScreen({ safeAreaEdges }: AccountsListScreenProps) {
       const isError = getAccountError(account);
       const visualStatus = getAccountVisualStatus(account);
       const statusText = visualStatus.label;
-      const groupsText = account.groups?.map((group) => group.name).filter(Boolean).slice(0, 3).join(' · ');
+      const groupsText = account.groups?.map((group) => group.name).filter(Boolean).slice(0, 3).join(' · ') || '未分组';
+      const capacityText = `${account.current_concurrency ?? 0} / ${account.concurrency ?? 0}`;
+      const createdAtText = formatDisplayTime(account.created_at);
+      const accountCapacityText = `容量 ${capacityText} · 创建时间 ${createdAtText}`;
+      const accountErrorMessage = getAccountErrorMessage(account);
       const todayStats = todayByAccountId.get(account.id) ?? { requests: 0, tokens: 0, cost: 0 };
       const usageWindows = getAccountUsageWindows(account);
       const recentUsedText = formatRelativeTime(account.last_used_at);
@@ -255,9 +259,9 @@ export function AccountsListScreen({ safeAreaEdges }: AccountsListScreenProps) {
               </View>
 
               <Text className="text-xs text-[#7d7468]">优先级 {account.priority ?? 0} · 倍率 {(account.rate_multiplier ?? 1).toFixed(2)}x</Text>
-
-              {groupsText ? <Text className="text-xs text-[#7d7468]">分组 {groupsText}</Text> : null}
-              {account.error_message ? <Text className="text-xs text-[#a4512b]">异常信息：{account.error_message}</Text> : null}
+              <Text className="text-xs text-[#7d7468]" numberOfLines={1}>分组 {groupsText}</Text>
+              <Text className="text-xs text-[#7d7468]" numberOfLines={1}>{accountCapacityText}</Text>
+              {accountErrorMessage ? <Text className="text-xs text-[#a4512b]">异常信息：{accountErrorMessage}</Text> : null}
 
               <View className="flex-row gap-2">
                 <Pressable

@@ -10,7 +10,15 @@ export type AccountVisualStatus = {
 };
 
 export function getAccountError(account: Pick<AdminAccount, 'status' | 'error_message'>) {
-  return Boolean(account.status === 'error' || account.error_message);
+  return Boolean(`${account.status ?? ''}`.toLowerCase() === 'error' || account.error_message);
+}
+
+export function getAccountErrorMessage(account: Pick<AdminAccount, 'status' | 'error_message'>) {
+  if (account.error_message) {
+    return account.error_message;
+  }
+
+  return getAccountError(account) ? '账号状态异常，后台未返回详细原因' : '';
 }
 
 export function getAccountVisualStatus(

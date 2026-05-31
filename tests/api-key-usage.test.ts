@@ -11,6 +11,7 @@ import {
   sortApiKeysByLastUsedDesc,
   toTimeValue,
 } from '../src/lib/api-key-usage';
+import { formatDisplayTime } from '../src/lib/formatters';
 import type { TrendPoint } from '../src/types/admin';
 
 function trendPoint(input: Partial<TrendPoint> & Pick<TrendPoint, 'date'>): TrendPoint {
@@ -142,5 +143,10 @@ describe('api key usage helpers', () => {
     assert.equal(formatIpLocation({ ip_location: 'Japan / Tokyo' }), 'Japan / Tokyo');
     assert.equal(formatIpLocation({ country: 'US', region: 'California', city: 'San Jose' }), 'US/California');
     assert.equal(formatIpLocation({}), '--');
+  });
+
+  it('formats display time with seconds for account metadata', () => {
+    assert.equal(formatDisplayTime('2026-05-02T00:53:56+08:00'), '2026/05/02 00:53:56');
+    assert.equal(formatDisplayTime(null), '--');
   });
 });
