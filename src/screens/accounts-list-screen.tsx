@@ -7,16 +7,22 @@ import type { Edge } from 'react-native-safe-area-context';
 import { ListCard } from '@/src/components/list-card';
 import { ScreenShell } from '@/src/components/screen-shell';
 import { useDebouncedValue } from '@/src/hooks/use-debounced-value';
-import { formatRelativeTime, formatUsageWindowReset, getAccountUsageWindows } from '@/src/lib/account-usage';
+import {
+  formatRelativeTime,
+  formatUsageWindowReset,
+  getAccountUsageWindows,
+  isAccountUsageLimited,
+  isUsageWindowLimited,
+} from '@/src/lib/account-usage';
 import { formatTokenValue } from '@/src/lib/formatters';
 import { getAccountTodayStats, listAccounts, setAccountSchedulable, testAccount } from '@/src/services/admin';
 import type { AdminAccount } from '@/src/types/admin';
 
-type AccountStatusFilter = 'all' | 'active' | 'paused' | 'error';
+type AccountStatusFilter = 'all' | 'active' | 'limited' | 'paused' | 'error';
 type UsageSort = 'usage-desc' | 'usage-asc';
 type AccountVisualStatus = {
   filterKey: AccountStatusFilter;
-  label: '正常' | '暂停' | '异常';
+  label: '正常' | '限流' | '暂停' | '异常';
   badgeTone: 'success' | 'muted' | 'danger';
 };
 
@@ -34,6 +40,9 @@ function getAccountVisualStatus(account: AdminAccount): AccountVisualStatus {
   const normalizedStatus = `${account.status ?? ''}`.toLowerCase();
   const isPausedStatus = ['inactive', 'disabled', 'paused', 'stop', 'stopped'].includes(normalizedStatus);
 
+  if (isAccountUsageLimited(account)) {
+    return { filterKey: 'limited', label: '限流', badgeTone: 'danger' };
+  }
   if (getAccountError(account)) {
     return { filterKey: 'error', label: '异常', badgeTone: 'danger' };
   }
@@ -100,6 +109,7 @@ export function AccountsListScreen({ safeAreaEdges }: AccountsListScreenProps) {
       const visualStatus = getAccountVisualStatus(account);
       if (filter === 'all') return true;
       if (filter === 'active') return visualStatus.filterKey === 'active';
+      if (filter === 'limited') return visualStatus.filterKey === 'limited';
       if (filter === 'paused') return visualStatus.filterKey === 'paused';
       if (filter === 'error') return visualStatus.filterKey === 'error';
       return true;
@@ -124,9 +134,10 @@ export function AccountsListScreen({ safeAreaEdges }: AccountsListScreenProps) {
   const summary = useMemo(() => {
     const total = items.length;
     const errors = items.filter((item) => getAccountVisualStatus(item).filterKey === 'error').length;
+    const limited = items.filter((item) => getAccountVisualStatus(item).filterKey === 'limited').length;
     const paused = items.filter((item) => getAccountVisualStatus(item).filterKey === 'paused').length;
     const active = items.filter((item) => getAccountVisualStatus(item).filterKey === 'active').length;
-    return { total, active, paused, errors };
+    return { total, active, limited, paused, errors };
   }, [items]);
 
   const listHeader = useMemo(
@@ -148,6 +159,7 @@ export function AccountsListScreen({ safeAreaEdges }: AccountsListScreenProps) {
             {([
               ['all', `全部 ${summary.total}`],
               ['active', `正常 ${summary.active}`],
+              ['limited', `限流 ${summary.limited}`],
               ['paused', `暂停 ${summary.paused}`],
               ['error', `异常 ${summary.errors}`],
             ] as const).map(([key, label]) => {
@@ -184,7 +196,7 @@ export function AccountsListScreen({ safeAreaEdges }: AccountsListScreenProps) {
         </View>
       </View>
     ),
-    [filter, summary.active, summary.errors, summary.paused, summary.total, usageSort]
+    [filter, summary.active, summary.errors, summary.limited, summary.paused, summary.total, usageSort]
   );
 
   const renderItem = useCallback(
@@ -239,22 +251,25 @@ export function AccountsListScreen({ safeAreaEdges }: AccountsListScreenProps) {
                   <Text className="text-[11px] font-semibold text-[#4e5664]">用量窗口</Text>
                   {usageWindows.length > 0 ? (
                     <View className="mt-2 gap-2">
-                      {usageWindows.map((window) => (
-                        <View key={window.key} className="flex-row items-center gap-2">
-                          <Text className="min-w-8 rounded-md bg-[#e4ecff] px-2 py-1 text-center text-xs font-semibold text-[#3c45f0]">
-                            {window.label}
-                          </Text>
-                          <View className="h-1.5 flex-1 overflow-hidden rounded-full bg-[#e0e2e7]">
-                            <View
-                              className="h-full rounded-full bg-[#2fb96b]"
-                              style={{ width: `${window.percent}%` }}
-                            />
+                      {usageWindows.map((window) => {
+                        const limited = isUsageWindowLimited(window);
+                        return (
+                          <View key={window.key} className="flex-row items-center gap-2">
+                            <Text className="min-w-8 rounded-md bg-[#e4ecff] px-2 py-1 text-center text-xs font-semibold text-[#3c45f0]">
+                              {window.label}
+                            </Text>
+                            <View className="h-1.5 flex-1 overflow-hidden rounded-full bg-[#e0e2e7]">
+                              <View
+                                className={limited ? 'h-full rounded-full bg-[#ef4444]' : 'h-full rounded-full bg-[#2fb96b]'}
+                                style={{ width: `${window.percent}%` }}
+                              />
+                            </View>
+                            <Text className={limited ? 'min-w-24 text-xs text-[#ef4444]' : 'min-w-24 text-xs text-[#6f7785]'}>
+                              {window.percent}% {formatUsageWindowReset(window)}
+                            </Text>
                           </View>
-                          <Text className="min-w-24 text-xs text-[#6f7785]">
-                            {window.percent}% {formatUsageWindowReset(window)}
-                          </Text>
-                        </View>
-                      ))}
+                        );
+                      })}
                     </View>
                   ) : (
                     <Text className="mt-2 text-xs text-[#8f96a3]">暂无窗口数据</Text>

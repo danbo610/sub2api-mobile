@@ -70,6 +70,14 @@ export function getAccountUsageWindows(account: Pick<AdminAccount, 'extra'>): Ac
   });
 }
 
+export function isUsageWindowLimited(window: Pick<AccountUsageWindow, 'percent'>) {
+  return window.percent >= 100;
+}
+
+export function isAccountUsageLimited(account: Pick<AdminAccount, 'extra'>) {
+  return getAccountUsageWindows(account).some(isUsageWindowLimited);
+}
+
 export function formatDurationFromSeconds(totalSeconds?: number) {
   if (totalSeconds === undefined || !Number.isFinite(totalSeconds)) {
     return '--';

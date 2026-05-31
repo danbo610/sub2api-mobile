@@ -7,6 +7,8 @@ import {
   formatRelativeTime,
   formatUsageWindowReset,
   getAccountUsageWindows,
+  isAccountUsageLimited,
+  isUsageWindowLimited,
 } from '../src/lib/account-usage';
 
 describe('account usage formatting', () => {
@@ -48,6 +50,15 @@ describe('account usage formatting', () => {
     assert.equal(clampUsagePercent(101.2), 100);
     assert.equal(clampUsagePercent('28.6'), 29);
     assert.equal(clampUsagePercent('bad'), undefined);
+  });
+
+  it('marks windows and accounts as limited when usage reaches 100 percent', () => {
+    assert.equal(isUsageWindowLimited({ percent: 99 }), false);
+    assert.equal(isUsageWindowLimited({ percent: 100 }), true);
+
+    assert.equal(isAccountUsageLimited({ extra: { codex_5h_used_percent: 99, codex_7d_used_percent: 20 } }), false);
+    assert.equal(isAccountUsageLimited({ extra: { codex_5h_used_percent: 1, codex_7d_used_percent: 100 } }), true);
+    assert.equal(isAccountUsageLimited({ extra: { codex_5h_used_percent: 100 } }), true);
   });
 
   it('formats usage reset durations compactly', () => {
