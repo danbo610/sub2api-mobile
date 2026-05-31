@@ -3,6 +3,8 @@
   "exclude": [
     "dist",
     "node_modules",
+    "tests",
+    ".unit-test-dist",
     ".agents",
     "skills"
   ],

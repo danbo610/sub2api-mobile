@@ -67,6 +67,7 @@ skills-lock.json
 
 # typescript
 *.tsbuildinfo
+.unit-test-dist/
 
 # generated native folders
 /ios

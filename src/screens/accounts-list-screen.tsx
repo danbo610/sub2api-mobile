@@ -7,6 +7,7 @@ import type { Edge } from 'react-native-safe-area-context';
 import { ListCard } from '@/src/components/list-card';
 import { ScreenShell } from '@/src/components/screen-shell';
 import { useDebouncedValue } from '@/src/hooks/use-debounced-value';
+import { formatRelativeTime, formatUsageWindowReset, getAccountUsageWindows } from '@/src/lib/account-usage';
 import { formatTokenValue } from '@/src/lib/formatters';
 import { getAccountTodayStats, listAccounts, setAccountSchedulable, testAccount } from '@/src/services/admin';
 import type { AdminAccount } from '@/src/types/admin';
@@ -24,13 +25,6 @@ type AccountTodaySummary = {
   tokens: number;
   cost: number;
 };
-
-function formatTime(value?: string | null) {
-  if (!value) return '--';
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return '--';
-  return `${date.getFullYear()}/${String(date.getMonth() + 1).padStart(2, '0')}/${String(date.getDate()).padStart(2, '0')} ${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`;
-}
 
 function getAccountError(account: AdminAccount) {
   return Boolean(account.status === 'error' || account.error_message);
@@ -200,6 +194,8 @@ export function AccountsListScreen({ safeAreaEdges }: AccountsListScreenProps) {
       const statusText = visualStatus.label;
       const groupsText = account.groups?.map((group) => group.name).filter(Boolean).slice(0, 3).join(' · ');
       const todayStats = todayByAccountId.get(account.id) ?? { requests: 0, tokens: 0, cost: 0 };
+      const usageWindows = getAccountUsageWindows(account);
+      const recentUsedText = formatRelativeTime(account.last_used_at);
       const nextSchedulable = visualStatus.filterKey === 'paused';
       const toggleLabel = nextSchedulable ? '恢复' : '暂停';
       const testFeedback = testFeedbackByAccountId[account.id];
@@ -221,7 +217,6 @@ export function AccountsListScreen({ safeAreaEdges }: AccountsListScreenProps) {
                   {account.schedulable && !isError ? <ShieldCheck color="#7d7468" size={14} /> : <ShieldOff color="#7d7468" size={14} />}
                   <Text className="text-sm text-[#7d7468]">状态：{statusText}</Text>
                 </View>
-                <Text className="text-xs text-[#7d7468]">最近使用 {formatTime(account.last_used_at || account.updated_at)}</Text>
               </View>
 
               <View className="flex-row gap-2">
@@ -236,6 +231,38 @@ export function AccountsListScreen({ safeAreaEdges }: AccountsListScreenProps) {
                 <View className="flex-1 rounded-[14px] bg-[#f1ece2] px-3 py-3">
                   <Text className="text-[11px] text-[#7d7468]">token消耗</Text>
                   <Text className="mt-1 text-sm font-bold text-[#16181a]">{formatTokenValue(todayStats.tokens)}</Text>
+                </View>
+              </View>
+
+              <View className="flex-row items-start gap-3 rounded-[14px] bg-[#f7f3eb] px-3 py-3">
+                <View className="flex-1">
+                  <Text className="text-[11px] font-semibold text-[#4e5664]">用量窗口</Text>
+                  {usageWindows.length > 0 ? (
+                    <View className="mt-2 gap-2">
+                      {usageWindows.map((window) => (
+                        <View key={window.key} className="flex-row items-center gap-2">
+                          <Text className="min-w-8 rounded-md bg-[#e4ecff] px-2 py-1 text-center text-xs font-semibold text-[#3c45f0]">
+                            {window.label}
+                          </Text>
+                          <View className="h-1.5 flex-1 overflow-hidden rounded-full bg-[#e0e2e7]">
+                            <View
+                              className="h-full rounded-full bg-[#2fb96b]"
+                              style={{ width: `${window.percent}%` }}
+                            />
+                          </View>
+                          <Text className="min-w-24 text-xs text-[#6f7785]">
+                            {window.percent}% {formatUsageWindowReset(window)}
+                          </Text>
+                        </View>
+                      ))}
+                    </View>
+                  ) : (
+                    <Text className="mt-2 text-xs text-[#8f96a3]">暂无窗口数据</Text>
+                  )}
+                </View>
+                <View style={{ minWidth: 82 }}>
+                  <Text className="text-right text-[11px] font-semibold text-[#4e5664]">最近使用</Text>
+                  <Text className="mt-3 text-right text-lg font-semibold text-[#6f7785]">{recentUsedText}</Text>
                 </View>
               </View>
 
