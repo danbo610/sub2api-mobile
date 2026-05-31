@@ -1,7 +1,7 @@
 import { adminConfigState } from '@/src/store/admin-config';
 import type { ApiEnvelope } from '@/src/types/admin';
 
-function buildRequestUrl(baseUrl: string, path: string) {
+export function buildAdminRequestUrl(baseUrl: string, path: string) {
   const normalizedBase = baseUrl.trim().replace(/\/$/, '');
   const normalizedPath = path.startsWith('/') ? path : `/${path}`;
   const duplicatedPrefixes = ['/api/v1', '/api'];
@@ -42,7 +42,7 @@ export async function adminFetch<T>(
     headers.set('Idempotency-Key', options.idempotencyKey);
   }
 
-  const response = await fetch(buildRequestUrl(baseUrl, path), {
+  const response = await fetch(buildAdminRequestUrl(baseUrl, path), {
     ...init,
     headers,
   });

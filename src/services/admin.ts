@@ -1,7 +1,10 @@
-import { adminFetch } from '@/src/lib/admin-fetch';
+import { buildAdminRequestUrl, adminFetch } from '@/src/lib/admin-fetch';
+import { parseAccountTestResponse } from '@/src/lib/account-test';
+import { adminConfigState } from '@/src/store/admin-config';
 import type {
   AccountTodayStats,
   AdminAccount,
+  AdminAccountModel,
   AdminApiKey,
   AdminGroup,
   AdminSettings,
@@ -325,6 +328,10 @@ export function getAccount(accountId: number) {
   return adminFetch<AdminAccount>(`/api/v1/admin/accounts/${accountId}`);
 }
 
+export function getAccountAvailableModels(accountId: number) {
+  return adminFetch<AdminAccountModel[]>(`/api/v1/admin/accounts/${accountId}/models`);
+}
+
 export function createAccount(body: CreateAccountRequest) {
   return adminFetch<AdminAccount>('/api/v1/admin/accounts', {
     method: 'POST',
@@ -336,9 +343,58 @@ export function getAccountTodayStats(accountId: number) {
   return adminFetch<AccountTodayStats>(`/api/v1/admin/accounts/${accountId}/today-stats`);
 }
 
-export function testAccount(accountId: number) {
-  return adminFetch(`/api/v1/admin/accounts/${accountId}/test`, {
+function getDefaultTestModel(account: Pick<AdminAccount, 'platform'>, models: AdminAccountModel[]) {
+  if (models.length === 0) {
+    return undefined;
+  }
+
+  if (account.platform === 'gemini') {
+    return models[0];
+  }
+
+  return models.find((model) => model.id.includes('sonnet')) ?? models[0];
+}
+
+export async function testAccount(account: Pick<AdminAccount, 'id' | 'platform'>) {
+  const baseUrl = adminConfigState.baseUrl.trim().replace(/\/$/, '');
+  const adminApiKey = adminConfigState.adminApiKey.trim();
+
+  if (!baseUrl) {
+    throw new Error('BASE_URL_REQUIRED');
+  }
+
+  if (!adminApiKey) {
+    throw new Error('ADMIN_API_KEY_REQUIRED');
+  }
+
+  const headers = new Headers();
+  headers.set('Content-Type', 'application/json');
+  headers.set('x-api-key', adminApiKey);
+
+  const models = await getAccountAvailableModels(account.id);
+  const selectedModel = getDefaultTestModel(account, models);
+
+  return fetch(buildAdminRequestUrl(baseUrl, `/api/v1/admin/accounts/${account.id}/test`), {
     method: 'POST',
+    headers,
+    body: JSON.stringify({
+      model_id: selectedModel?.id ?? '',
+      prompt: '',
+    }),
+  }).then(async (response) => {
+    const text = await response.text();
+    const result = parseAccountTestResponse({
+      text,
+      status: response.status,
+      ok: response.ok,
+      contentType: response.headers.get('content-type'),
+    });
+
+    return {
+      ...result,
+      selectedModelId: selectedModel?.id,
+      selectedModelName: selectedModel?.display_name ?? selectedModel?.id,
+    };
   });
 }
 

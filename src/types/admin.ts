@@ -200,6 +200,16 @@ export type AdminGroup = {
   updated_at?: string;
 };
 
+export type AdminAccountModel = {
+  id: string;
+  object?: string;
+  created?: number;
+  owned_by?: string;
+  type?: string;
+  display_name?: string;
+  created_at?: string;
+};
+
 export type AccountTodayStats = {
   requests: number;
   tokens: number;

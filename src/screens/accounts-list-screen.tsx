@@ -16,6 +16,7 @@ import {
 } from '@/src/lib/account-usage';
 import { formatDisplayTime, formatTokenValue } from '@/src/lib/formatters';
 import { getAccountTodayStats, listAccounts, setAccountSchedulable, testAccount } from '@/src/services/admin';
+import type { AccountTestResult } from '@/src/lib/account-test';
 
 type UsageSort = 'usage-desc' | 'usage-asc';
 
@@ -29,12 +30,28 @@ type AccountsListScreenProps = {
   safeAreaEdges?: Edge[];
 };
 
+function AccountTestResultPanel({ result }: { result: AccountTestResult }) {
+  return (
+    <View className="rounded-[14px] bg-[#111827] px-3 py-3">
+      <Text className="text-xs text-[#9ca3af]">测试模型：{result.selectedModelName || result.selectedModelId || result.model || '--'}</Text>
+      <Text className="mt-1 text-xs font-semibold text-[#60a5fa]">使用模型：{result.model || '--'}</Text>
+      <Text className="mt-1 text-xs text-[#9ca3af]">发送测试消息："{result.prompt}"</Text>
+      <Text className={result.ok ? 'mt-2 text-xs font-semibold text-[#facc15]' : 'mt-2 text-xs font-semibold text-[#facc15]'}>
+        响应：
+      </Text>
+      <Text className={result.ok ? 'mt-1 text-sm leading-5 text-[#d1fae5]' : 'mt-1 text-sm leading-5 text-[#fca5a5]'}>
+        {result.ok ? result.responseText || '测试完成，未返回文本内容' : result.error || '测试失败'}
+      </Text>
+    </View>
+  );
+}
+
 export function AccountsListScreen({ safeAreaEdges }: AccountsListScreenProps) {
   const [searchText, setSearchText] = useState('');
   const [filter, setFilter] = useState<AccountStatusFilter>('all');
   const [usageSort, setUsageSort] = useState<UsageSort>('usage-desc');
   const [testingAccountId, setTestingAccountId] = useState<number | null>(null);
-  const [testFeedbackByAccountId, setTestFeedbackByAccountId] = useState<Record<number, string>>({});
+  const [testFeedbackByAccountId, setTestFeedbackByAccountId] = useState<Record<number, AccountTestResult>>({});
   const [togglingAccountId, setTogglingAccountId] = useState<number | null>(null);
   const keyword = useDebouncedValue(searchText.trim(), 300);
   const queryClient = useQueryClient();
@@ -51,7 +68,7 @@ export function AccountsListScreen({ safeAreaEdges }: AccountsListScreenProps) {
   });
 
   const testMutation = useMutation({
-    mutationFn: (accountId: number) => testAccount(accountId),
+    mutationFn: (account: (typeof items)[number]) => testAccount(account),
   });
 
   const items = accountsQuery.data?.items ?? [];
@@ -270,13 +287,16 @@ export function AccountsListScreen({ safeAreaEdges }: AccountsListScreenProps) {
                   onPress={(event) => {
                     event.stopPropagation();
                     setTestingAccountId(account.id);
-                    testMutation.mutate(account.id, {
-                      onSuccess: () => {
-                        setTestFeedbackByAccountId((current) => ({ ...current, [account.id]: '测试成功' }));
+                    testMutation.mutate(account, {
+                      onSuccess: (result) => {
+                        setTestFeedbackByAccountId((current) => ({ ...current, [account.id]: result }));
                       },
                       onError: (error) => {
                         const message = error instanceof Error && error.message ? error.message : '测试失败';
-                        setTestFeedbackByAccountId((current) => ({ ...current, [account.id]: message }));
+                        setTestFeedbackByAccountId((current) => ({
+                          ...current,
+                          [account.id]: { ok: false, prompt: 'hi', error: message },
+                        }));
                       },
                       onSettled: () => {
                         setTestingAccountId((current) => (current === account.id ? null : current));
@@ -306,7 +326,7 @@ export function AccountsListScreen({ safeAreaEdges }: AccountsListScreenProps) {
                 </Pressable>
               </View>
 
-              {testFeedback ? <Text className="text-xs text-[#1d5f55]">测试结果：{testFeedback}</Text> : null}
+              {testFeedback ? <AccountTestResultPanel result={testFeedback} /> : null}
             </View>
           </ListCard>
         </View>
