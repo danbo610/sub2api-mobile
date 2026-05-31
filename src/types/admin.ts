@@ -85,6 +85,10 @@ export type UsageStats = {
 };
 
 export type DashboardSnapshot = {
+  stats?: UsageStats & {
+    cost?: number;
+    actual_cost?: number;
+  };
   trend?: TrendPoint[];
   models?: ModelStat[];
   groups?: Array<{

@@ -32,6 +32,10 @@ function buildQuery(params: Record<string, string | number | boolean | null | un
   return value ? `?${value}` : '';
 }
 
+function getErrorMessage(error: unknown) {
+  return error instanceof Error && error.message ? error.message : 'REQUEST_FAILED';
+}
+
 export function getDashboardStats() {
   return adminFetch<DashboardStats>('/api/v1/admin/dashboard/stats');
 }
@@ -60,6 +64,7 @@ export function getDashboardSnapshot(params: {
   end_date: string;
   granularity?: 'day' | 'hour';
   account_id?: number;
+  api_key_id?: number;
   user_id?: number;
   group_id?: number;
   model?: string;
@@ -78,6 +83,7 @@ export function getUsageStats(params: {
   start_date: string;
   end_date: string;
   user_id?: number;
+  api_key_id?: number;
   account_id?: number;
   group_id?: number;
   model?: string;
@@ -85,6 +91,54 @@ export function getUsageStats(params: {
   billing_type?: string | null;
 }) {
   return adminFetch<UsageStats>(`/api/v1/admin/usage/stats${buildQuery(params)}`);
+}
+
+export type ApiKeyUsageSummary = {
+  apiKeyId: number;
+  today?: UsageStats;
+  month?: UsageStats;
+  todayError?: string;
+  monthError?: string;
+};
+
+export async function getApiKeyUsageSummary(params: {
+  userId: number;
+  apiKeyId: number;
+  todayRange: { start_date: string; end_date: string };
+  monthRange: { start_date: string; end_date: string };
+}): Promise<ApiKeyUsageSummary> {
+  const snapshotResult = await Promise.allSettled([
+    getDashboardSnapshot({
+      ...params.monthRange,
+      granularity: 'day',
+      user_id: params.userId,
+      api_key_id: params.apiKeyId,
+      include_stats: true,
+      include_trend: true,
+      include_model_stats: false,
+      include_group_stats: false,
+      include_users_trend: false,
+    }),
+  ]);
+
+  const snapshot = snapshotResult[0];
+
+  if (snapshot.status === 'fulfilled') {
+    const todayPoint = snapshot.value.trend?.find((item) => item.date.startsWith(params.todayRange.end_date));
+    const monthCost = snapshot.value.trend?.reduce((sum, item) => sum + Number(item.cost ?? item.actual_cost ?? 0), 0) ?? 0;
+
+    return {
+      apiKeyId: params.apiKeyId,
+      today: { total_account_cost: Number(todayPoint?.cost ?? todayPoint?.actual_cost ?? 0) },
+      month: { total_account_cost: monthCost },
+    };
+  }
+
+  return {
+    apiKeyId: params.apiKeyId,
+    todayError: getErrorMessage(snapshot.reason),
+    monthError: getErrorMessage(snapshot.reason),
+  };
 }
 
 export function listUsers(search = '') {

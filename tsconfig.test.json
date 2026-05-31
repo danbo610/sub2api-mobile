@@ -11,7 +11,9 @@
     ]
   },
   "include": [
+    "src/lib/api-key-usage.ts",
     "src/lib/account-usage.ts",
+    "src/lib/account-status.ts",
     "src/types/admin.ts",
     "tests/**/*.ts"
   ],

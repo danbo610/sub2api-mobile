@@ -1,13 +1,14 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import * as Clipboard from 'expo-clipboard';
 import { Stack, useLocalSearchParams } from 'expo-router';
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Alert, Pressable, ScrollView, Text, TextInput, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { LineTrendChart } from '@/src/components/line-trend-chart';
-import { getDashboardSnapshot, getUsageStats, getUser, listUserApiKeys, updateUserBalance, updateUserStatus } from '@/src/services/admin';
-import type { AdminApiKey, BalanceOperation } from '@/src/types/admin';
+import { sortApiKeysByLastUsedDesc } from '@/src/lib/api-key-usage';
+import { getApiKeyUsageSummary, getDashboardSnapshot, getUsageStats, getUser, listUserApiKeys, updateUserBalance, updateUserStatus, type ApiKeyUsageSummary } from '@/src/services/admin';
+import type { AdminApiKey, BalanceOperation, UsageStats } from '@/src/types/admin';
 
 const colors = {
   page: '#f4efe4',
@@ -29,6 +30,14 @@ const RANGE_OPTIONS: Array<{ key: RangeKey; label: string }> = [
   { key: '7d', label: '7D' },
   { key: '30d', label: '30D' },
 ];
+const API_KEY_USAGE_BATCH_SIZE = 5;
+
+function formatDateParam(value: Date) {
+  const year = value.getFullYear();
+  const month = String(value.getMonth() + 1).padStart(2, '0');
+  const day = String(value.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+}
 
 function getDateRange(rangeKey: RangeKey) {
   const end = new Date();
@@ -42,12 +51,18 @@ function getDateRange(rangeKey: RangeKey) {
     start.setDate(end.getDate() - 6);
   }
 
-  const toDate = (value: Date) => value.toISOString().slice(0, 10);
-
   return {
-    start_date: toDate(start),
-    end_date: toDate(end),
+    start_date: formatDateParam(start),
+    end_date: formatDateParam(end),
     granularity: rangeKey === '24h' ? ('hour' as const) : ('day' as const),
+  };
+}
+
+function getTodayRange() {
+  const today = formatDateParam(new Date());
+  return {
+    start_date: today,
+    end_date: today,
   };
 }
 
@@ -106,8 +121,9 @@ function formatTime(value?: string | null) {
   const day = `${date.getDate()}`.padStart(2, '0');
   const hours = `${date.getHours()}`.padStart(2, '0');
   const minutes = `${date.getMinutes()}`.padStart(2, '0');
+  const seconds = `${date.getSeconds()}`.padStart(2, '0');
 
-  return `${year}-${month}-${day} ${hours}:${minutes}`;
+  return `${year}/${month}/${day} ${hours}:${minutes}:${seconds}`;
 }
 
 function Section({ title, children }: { title: string; children: React.ReactNode }) {
@@ -195,7 +211,23 @@ function CopyInlineButton({ copied, onPress }: { copied: boolean; onPress: () =>
   );
 }
 
-function KeyItem({ item, copied, onCopy }: { item: AdminApiKey; copied: boolean; onCopy: () => void }) {
+function KeyItem({
+  item,
+  copied,
+  onCopy,
+  todayUsage,
+  monthUsage,
+  usageLoading,
+  usageError,
+}: {
+  item: AdminApiKey;
+  copied: boolean;
+  onCopy: () => void;
+  todayUsage?: UsageStats;
+  monthUsage?: UsageStats;
+  usageLoading?: boolean;
+  usageError?: boolean;
+}) {
   return (
     <View
       style={{
@@ -220,6 +252,12 @@ function KeyItem({ item, copied, onCopy }: { item: AdminApiKey; copied: boolean;
 
       <Text style={{ marginTop: 10, fontSize: 12, lineHeight: 18, color: colors.text }}>{item.key || '--'}</Text>
 
+      <View style={{ flexDirection: 'row', gap: 8, marginTop: 12 }}>
+        <MetricCard label="今日花费" value={usageLoading ? '加载中' : formatUsageCost(todayUsage)} />
+        <MetricCard label="近30天花费" value={usageLoading ? '加载中' : formatUsageCost(monthUsage)} />
+      </View>
+      {usageError ? <Text style={{ marginTop: 8, fontSize: 12, color: colors.errorText }}>部分用量加载失败</Text> : null}
+
       <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', gap: 12, marginTop: 12 }}>
         <View style={{ flex: 1 }}>
           <Text style={{ fontSize: 11, color: colors.subtext }}>已用额度</Text>
@@ -227,7 +265,7 @@ function KeyItem({ item, copied, onCopy }: { item: AdminApiKey; copied: boolean;
         </View>
         <View style={{ flex: 1, alignItems: 'flex-end' }}>
           <Text style={{ fontSize: 11, color: colors.subtext }}>最后使用时间</Text>
-          <Text style={{ marginTop: 4, fontSize: 13, color: colors.subtext }}>{formatTime(item.last_used_at || item.updated_at || item.created_at)}</Text>
+          <Text style={{ marginTop: 4, fontSize: 13, color: colors.subtext }}>{formatTime(item.last_used_at)}</Text>
         </View>
       </View>
     </View>
@@ -246,8 +284,13 @@ export default function UserDetailScreen() {
   const [statusError, setStatusError] = useState<string | null>(null);
   const [searchText, setSearchText] = useState('');
   const [copiedKeyId, setCopiedKeyId] = useState<number | null>(null);
+  const [keyUsageById, setKeyUsageById] = useState<Record<number, ApiKeyUsageSummary>>({});
+  const [loadingKeyUsageIds, setLoadingKeyUsageIds] = useState<Record<number, boolean>>({});
+  const loadedKeyUsageSignatureRef = useRef('');
   const [rangeKey, setRangeKey] = useState<RangeKey>('7d');
   const range = getDateRange(rangeKey);
+  const todayRange = useMemo(() => getTodayRange(), []);
+  const monthRange = useMemo(() => getDateRange('30d'), []);
 
   const userQuery = useQuery({
     queryKey: ['user', userId],
@@ -317,11 +360,82 @@ export default function UserDetailScreen() {
   const filteredApiKeys = useMemo(() => {
     const keyword = searchText.trim().toLowerCase();
 
-    return apiKeys.filter((item) => {
-      const haystack = [item.name, item.key, item.group?.name].filter(Boolean).join(' ').toLowerCase();
-      return keyword ? haystack.includes(keyword) : true;
-    });
+    return sortApiKeysByLastUsedDesc(apiKeys)
+      .filter((item) => {
+        const haystack = [item.name, item.key, item.group?.name].filter(Boolean).join(' ').toLowerCase();
+        return keyword ? haystack.includes(keyword) : true;
+      });
   }, [apiKeys, searchText]);
+  const filteredApiKeyIds = useMemo(() => filteredApiKeys.map((item) => item.id), [filteredApiKeys]);
+
+  useEffect(() => {
+    const signature = [
+      userId,
+      todayRange.start_date,
+      todayRange.end_date,
+      monthRange.start_date,
+      monthRange.end_date,
+      filteredApiKeyIds.join(','),
+    ].join('|');
+
+    if (!Number.isFinite(userId) || filteredApiKeyIds.length === 0) {
+      if (loadedKeyUsageSignatureRef.current !== signature) {
+        setKeyUsageById({});
+        setLoadingKeyUsageIds({});
+        loadedKeyUsageSignatureRef.current = signature;
+      }
+      return;
+    }
+
+    if (loadedKeyUsageSignatureRef.current !== signature) {
+      loadedKeyUsageSignatureRef.current = signature;
+      setKeyUsageById({});
+      setLoadingKeyUsageIds(Object.fromEntries(filteredApiKeyIds.map((apiKeyId) => [apiKeyId, true])));
+    }
+
+    let cancelled = false;
+
+    async function loadApiKeyUsageQueue() {
+      for (let start = 0; start < filteredApiKeyIds.length; start += API_KEY_USAGE_BATCH_SIZE) {
+        if (cancelled) return;
+        const batchIds = filteredApiKeyIds.slice(start, start + API_KEY_USAGE_BATCH_SIZE);
+
+        setLoadingKeyUsageIds((current) => ({
+          ...current,
+          ...Object.fromEntries(batchIds.map((apiKeyId) => [apiKeyId, true])),
+        }));
+
+        const summaries = await Promise.all(
+          batchIds.map((apiKeyId) =>
+            getApiKeyUsageSummary({
+              userId,
+              apiKeyId,
+              todayRange,
+              monthRange,
+            })
+          )
+        );
+
+        if (cancelled) return;
+
+        setKeyUsageById((current) => ({
+          ...current,
+          ...Object.fromEntries(summaries.map((summary) => [summary.apiKeyId, summary])),
+        }));
+        setLoadingKeyUsageIds((current) => ({
+          ...current,
+          ...Object.fromEntries(batchIds.map((apiKeyId) => [apiKeyId, false])),
+        }));
+      }
+    }
+
+    void loadApiKeyUsageQueue();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [filteredApiKeyIds, monthRange, todayRange, userId]);
+
   const trendPoints = (usageSnapshotQuery.data?.trend ?? []).map((item) => ({
     label: rangeKey === '24h' ? item.date.slice(11, 13) : item.date.slice(5, 10),
     value: item.total_tokens,
@@ -551,9 +665,21 @@ export default function UserDetailScreen() {
             {!apiKeysQuery.isLoading && !apiKeysQuery.error ? (
               filteredApiKeys.length > 0 ? (
                 <View>
-                  {filteredApiKeys.map((item) => (
-                    <KeyItem key={item.id} item={item} copied={copiedKeyId === item.id} onCopy={() => copyKey(item)} />
-                  ))}
+                  {filteredApiKeys.map((item) => {
+                    const usage = keyUsageById[item.id];
+                    return (
+                      <KeyItem
+                        key={item.id}
+                        item={item}
+                        copied={copiedKeyId === item.id}
+                        onCopy={() => copyKey(item)}
+                        todayUsage={usage?.today}
+                        monthUsage={usage?.month}
+                        usageLoading={loadingKeyUsageIds[item.id] ?? !usage}
+                        usageError={Boolean(usage?.todayError || usage?.monthError)}
+                      />
+                    );
+                  })}
                 </View>
               ) : (
                 <Text style={{ color: colors.subtext }}>当前筛选条件下没有 Key。</Text>

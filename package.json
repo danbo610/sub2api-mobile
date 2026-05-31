@@ -8,7 +8,7 @@
     "ios": "expo start --ios",
     "web": "expo start --web",
     "typecheck": "tsc --noEmit",
-    "test:unit": "tsc -p tsconfig.test.json && node --test .unit-test-dist/tests/account-usage.test.js",
+    "test:unit": "tsc -p tsconfig.test.json && node --test .unit-test-dist/tests/*.js",
     "proxy": "node server/index.js",
     "dev:web-proxy": "concurrently -n proxy,web -c green,blue \"npm run proxy\" \"npm run web\"",
     "eas:build:development": "eas build --profile development",

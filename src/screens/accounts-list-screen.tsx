@@ -7,50 +7,23 @@ import type { Edge } from 'react-native-safe-area-context';
 import { ListCard } from '@/src/components/list-card';
 import { ScreenShell } from '@/src/components/screen-shell';
 import { useDebouncedValue } from '@/src/hooks/use-debounced-value';
+import { getAccountError, getAccountVisualStatus, type AccountStatusFilter } from '@/src/lib/account-status';
 import {
   formatRelativeTime,
   formatUsageWindowReset,
   getAccountUsageWindows,
-  isAccountUsageLimited,
   isUsageWindowLimited,
 } from '@/src/lib/account-usage';
 import { formatTokenValue } from '@/src/lib/formatters';
 import { getAccountTodayStats, listAccounts, setAccountSchedulable, testAccount } from '@/src/services/admin';
-import type { AdminAccount } from '@/src/types/admin';
 
-type AccountStatusFilter = 'all' | 'active' | 'limited' | 'paused' | 'error';
 type UsageSort = 'usage-desc' | 'usage-asc';
-type AccountVisualStatus = {
-  filterKey: AccountStatusFilter;
-  label: '正常' | '限流' | '暂停' | '异常';
-  badgeTone: 'success' | 'muted' | 'danger';
-};
 
 type AccountTodaySummary = {
   requests: number;
   tokens: number;
   cost: number;
 };
-
-function getAccountError(account: AdminAccount) {
-  return Boolean(account.status === 'error' || account.error_message);
-}
-
-function getAccountVisualStatus(account: AdminAccount): AccountVisualStatus {
-  const normalizedStatus = `${account.status ?? ''}`.toLowerCase();
-  const isPausedStatus = ['inactive', 'disabled', 'paused', 'stop', 'stopped'].includes(normalizedStatus);
-
-  if (isAccountUsageLimited(account)) {
-    return { filterKey: 'limited', label: '限流', badgeTone: 'danger' };
-  }
-  if (getAccountError(account)) {
-    return { filterKey: 'error', label: '异常', badgeTone: 'danger' };
-  }
-  if (isPausedStatus || account.schedulable === false) {
-    return { filterKey: 'paused', label: '暂停', badgeTone: 'muted' };
-  }
-  return { filterKey: 'active', label: '正常', badgeTone: 'success' };
-}
 
 type AccountsListScreenProps = {
   safeAreaEdges?: Edge[];

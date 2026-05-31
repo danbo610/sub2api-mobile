@@ -8,6 +8,7 @@ import { BarChartCard } from '@/src/components/bar-chart-card';
 import { formatTokenValue } from '@/src/lib/formatters';
 import { DonutChartCard } from '@/src/components/donut-chart-card';
 import { LineTrendChart } from '@/src/components/line-trend-chart';
+import { getAccountVisualStatus } from '@/src/lib/account-status';
 import { getAdminSettings, getDashboardModels, getDashboardStats, getDashboardTrend, listAccounts } from '@/src/services/admin';
 import { adminConfigState, hasAuthenticatedAdminSession } from '@/src/store/admin-config';
 
@@ -40,38 +41,6 @@ const RANGE_TITLE_MAP: Record<RangeKey, string> = {
   '7d': '7D',
   '30d': '30D',
 };
-
-function hasAccountError(account: { status?: string; error_message?: string | null }) {
-  return Boolean(account.status === 'error' || account.error_message);
-}
-
-function hasAccountRateLimited(account: {
-  rate_limit_reset_at?: string | null;
-  extra?: Record<string, unknown>;
-}) {
-  if (account.rate_limit_reset_at) {
-    const resetTime = new Date(account.rate_limit_reset_at).getTime();
-    if (!Number.isNaN(resetTime) && resetTime > Date.now()) {
-      return true;
-    }
-  }
-
-  const modelLimits = account.extra?.model_rate_limits;
-  if (!modelLimits || typeof modelLimits !== 'object' || Array.isArray(modelLimits)) {
-    return false;
-  }
-
-  const now = Date.now();
-  return Object.values(modelLimits as Record<string, unknown>).some((info) => {
-    if (!info || typeof info !== 'object' || Array.isArray(info)) return false;
-
-    const resetAt = (info as { rate_limit_reset_at?: unknown }).rate_limit_reset_at;
-    if (typeof resetAt !== 'string' || !resetAt.trim()) return false;
-
-    const resetTime = new Date(resetAt).getTime();
-    return !Number.isNaN(resetTime) && resetTime > now;
-  });
-}
 
 function getDateRange(rangeKey: RangeKey) {
   const end = new Date();
@@ -216,19 +185,37 @@ export default function MonitorScreen() {
   const stats = statsQuery.data;
   const siteName = settingsQuery.data?.site_name?.trim() || '管理控制台';
   const accounts = accountsQuery.data?.items ?? [];
+  const accountStatusSummary = useMemo(() => {
+    const next = {
+      total: accountsQuery.data?.total ?? accounts.length,
+      active: 0,
+      paused: 0,
+      error: 0,
+      limited: 0,
+    };
+
+    accounts.forEach((account) => {
+      const status = getAccountVisualStatus(account).filterKey;
+      if (status === 'active') next.active += 1;
+      if (status === 'paused') next.paused += 1;
+      if (status === 'error') next.error += 1;
+      if (status === 'limited') next.limited += 1;
+    });
+
+    return next;
+  }, [accounts, accountsQuery.data?.total]);
   const trend = trendQuery.data?.trend ?? [];
   const topModels = (modelsQuery.data?.models ?? []).slice(0, 5);
   const errorMessage = getErrorMessage(statsQuery.error ?? settingsQuery.error ?? accountsQuery.error ?? trendQuery.error ?? modelsQuery.error);
-  const currentPageErrorAccounts = accounts.filter(hasAccountError).length;
-  const currentPageLimitedAccounts = accounts.filter((item) => hasAccountRateLimited(item)).length;
   const currentPageBusyAccounts = accounts.filter((item) => {
-    if (hasAccountError(item) || hasAccountRateLimited(item)) return false;
+    if (getAccountVisualStatus(item).filterKey !== 'active') return false;
     return (item.current_concurrency ?? 0) > 0;
   }).length;
-  const totalAccounts = stats?.total_accounts ?? accountsQuery.data?.total ?? accounts.length;
-  const aggregatedErrorAccounts = stats?.error_accounts ?? 0;
-  const errorAccounts = Math.max(aggregatedErrorAccounts, currentPageErrorAccounts);
-  const healthyAccounts = stats?.normal_accounts ?? Math.max(totalAccounts - errorAccounts, 0);
+  const totalAccounts = accountStatusSummary.total;
+  const activeAccounts = accountStatusSummary.active;
+  const pausedAccounts = accountStatusSummary.paused;
+  const errorAccounts = accountStatusSummary.error;
+  const limitedAccounts = accountStatusSummary.limited;
   const latestTrendPoints = trend.slice(-6).reverse();
   const selectedTokenTotal = trend.reduce((sum, item) => sum + item.total_tokens, 0);
   const selectedCostTotal = trend.reduce((sum, item) => sum + item.cost, 0);
@@ -327,7 +314,7 @@ export default function MonitorScreen() {
             </View>
             <Section
               title="账号概览"
-              subtitle="总数、健康、异常和限流状态一览"
+              subtitle="全部、正常、暂停、异常和限流状态一览"
               right={(
                 <Pressable
                   style={{ alignSelf: 'flex-start', backgroundColor: colors.border, borderRadius: 12, paddingHorizontal: 12, paddingVertical: 8 }}
@@ -340,12 +327,16 @@ export default function MonitorScreen() {
               <Pressable onPress={() => router.push('/accounts/overview')}>
                 <View style={{ flexDirection: 'row', gap: 8 }}>
                   <View style={{ flex: 1, backgroundColor: colors.mutedCard, borderRadius: 14, padding: 12 }}>
-                    <Text style={{ fontSize: 11, color: '#8a8072' }}>总数</Text>
+                    <Text style={{ fontSize: 11, color: '#8a8072' }}>全部</Text>
                     <Text style={{ marginTop: 6, fontSize: 18, fontWeight: '700', color: colors.text }}>{formatNumber(totalAccounts)}</Text>
                   </View>
                   <View style={{ flex: 1, backgroundColor: colors.mutedCard, borderRadius: 14, padding: 12 }}>
-                    <Text style={{ fontSize: 11, color: '#8a8072' }}>健康</Text>
-                    <Text style={{ marginTop: 6, fontSize: 18, fontWeight: '700', color: colors.text }}>{formatNumber(healthyAccounts)}</Text>
+                    <Text style={{ fontSize: 11, color: '#8a8072' }}>正常</Text>
+                    <Text style={{ marginTop: 6, fontSize: 18, fontWeight: '700', color: colors.text }}>{formatNumber(activeAccounts)}</Text>
+                  </View>
+                  <View style={{ flex: 1, backgroundColor: colors.mutedCard, borderRadius: 14, padding: 12 }}>
+                    <Text style={{ fontSize: 11, color: '#8a8072' }}>暂停</Text>
+                    <Text style={{ marginTop: 6, fontSize: 18, fontWeight: '700', color: colors.text }}>{formatNumber(pausedAccounts)}</Text>
                   </View>
                   <View style={{ flex: 1, backgroundColor: colors.dangerBg, borderRadius: 14, padding: 12 }}>
                     <Text style={{ fontSize: 11, color: colors.danger }}>异常</Text>
@@ -353,10 +344,10 @@ export default function MonitorScreen() {
                   </View>
                   <View style={{ flex: 1, backgroundColor: colors.mutedCard, borderRadius: 14, padding: 12 }}>
                     <Text style={{ fontSize: 11, color: '#8a8072' }}>限流</Text>
-                    <Text style={{ marginTop: 6, fontSize: 18, fontWeight: '700', color: colors.text }}>{formatNumber(currentPageLimitedAccounts)}</Text>
+                    <Text style={{ marginTop: 6, fontSize: 18, fontWeight: '700', color: colors.text }}>{formatNumber(limitedAccounts)}</Text>
                   </View>
                 </View>
-                <Text style={{ marginTop: 10, fontSize: 12, color: colors.subtext }}>总数 / 健康 / 异常优先使用后端聚合字段；限流与繁忙基于当前页账号列表。点击进入账号清单。</Text>
+                <Text style={{ marginTop: 10, fontSize: 12, color: colors.subtext }}>状态口径与账号清单保持一致；点击进入账号清单。</Text>
               </Pressable>
             </Section>
 
@@ -385,14 +376,15 @@ export default function MonitorScreen() {
 
             <DonutChartCard
               title="账号健康"
-              subtitle="健康、繁忙、限流、异常分布"
+              subtitle="正常、繁忙、暂停、异常、限流分布"
               centerLabel="总账号"
               centerValue={formatNumber(totalAccounts)}
               segments={[
-                { label: '健康', value: healthyAccounts, color: '#1d5f55' },
+                { label: '正常', value: activeAccounts, color: '#1d5f55' },
                 { label: '繁忙', value: currentPageBusyAccounts, color: '#d38b36' },
-                { label: '限流', value: currentPageLimitedAccounts, color: '#7d7468' },
+                { label: '暂停', value: pausedAccounts, color: '#7d7468' },
                 { label: '异常', value: errorAccounts, color: '#a34d2d' },
+                { label: '限流', value: limitedAccounts, color: '#ef4444' },
               ]}
             />
 
