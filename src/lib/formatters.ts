@@ -24,6 +24,26 @@ export function formatTokenValue(value: number) {
   return formatCompactNumber(value, 1);
 }
 
+export function formatInteger(value?: number | null) {
+  const number = Number(value ?? 0);
+
+  if (!Number.isFinite(number)) {
+    return '--';
+  }
+
+  return new Intl.NumberFormat('en-US').format(Math.round(number));
+}
+
+export function formatCost(value?: number | null, digits = 4) {
+  const number = Number(value ?? 0);
+
+  if (!Number.isFinite(number)) {
+    return '--';
+  }
+
+  return `$${number.toFixed(digits)}`;
+}
+
 export function formatDisplayTime(value?: string | null) {
   if (!value) {
     return '--';

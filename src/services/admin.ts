@@ -147,6 +147,67 @@ export function listUsers(search = '') {
   );
 }
 
+export function listUsersPage(params: { page?: number; page_size?: number; search?: string } = {}) {
+  return adminFetch<PaginatedData<AdminUser>>(
+    `/api/v1/admin/users${buildQuery({
+      page: params.page ?? 1,
+      page_size: params.page_size ?? 100,
+      search: params.search?.trim(),
+    })}`
+  );
+}
+
+export function listApiKeys(params: { page?: number; page_size?: number; search?: string; status?: string } = {}) {
+  return adminFetch<PaginatedData<AdminApiKey>>(
+    `/api/v1/keys${buildQuery({
+      page: params.page ?? 1,
+      page_size: params.page_size ?? 100,
+      search: params.search?.trim(),
+      status: params.status,
+    })}`
+  );
+}
+
+export async function listAllApiKeys(params: { search?: string; status?: string } = {}) {
+  const firstPage = await listApiKeys({ ...params, page: 1, page_size: 100 });
+  const items = [...(firstPage.items ?? [])];
+  const pages = Math.max(Number(firstPage.pages ?? 1), 1);
+
+  for (let page = 2; page <= pages; page += 1) {
+    const nextPage = await listApiKeys({ ...params, page, page_size: 100 });
+    items.push(...(nextPage.items ?? []));
+  }
+
+  return items;
+}
+
+export async function listAllUserApiKeysFallback() {
+  const firstPage = await listUsersPage({ page: 1, page_size: 100 });
+  const users = [...(firstPage.items ?? [])];
+  const pages = Math.max(Number(firstPage.pages ?? 1), 1);
+
+  for (let page = 2; page <= pages; page += 1) {
+    const nextPage = await listUsersPage({ page, page_size: 100 });
+    users.push(...(nextPage.items ?? []));
+  }
+
+  const keyPages = await Promise.all(
+    users.map(async (user) => {
+      const result = await listUserApiKeys(user.id);
+      return (result.items ?? []).map((item) => ({
+        ...item,
+        user: {
+          id: user.id,
+          email: user.email,
+          username: user.username,
+        },
+      }));
+    })
+  );
+
+  return keyPages.flat();
+}
+
 export function getUser(userId: number) {
   return adminFetch<AdminUser>(`/api/v1/admin/users/${userId}`);
 }

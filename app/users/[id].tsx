@@ -1,12 +1,12 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import * as Clipboard from 'expo-clipboard';
-import { Stack, useLocalSearchParams } from 'expo-router';
+import { Stack, router, useLocalSearchParams } from 'expo-router';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Alert, Pressable, ScrollView, Text, TextInput, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { LineTrendChart } from '@/src/components/line-trend-chart';
-import { sortApiKeysByLastUsedDesc } from '@/src/lib/api-key-usage';
+import { API_KEY_USAGE_BATCH_SIZE, sortApiKeysByLastUsedDesc } from '@/src/lib/api-key-usage';
 import { getApiKeyUsageSummary, getDashboardSnapshot, getUsageStats, getUser, listUserApiKeys, updateUserBalance, updateUserStatus, type ApiKeyUsageSummary } from '@/src/services/admin';
 import type { AdminApiKey, BalanceOperation, UsageStats } from '@/src/types/admin';
 
@@ -30,8 +30,6 @@ const RANGE_OPTIONS: Array<{ key: RangeKey; label: string }> = [
   { key: '7d', label: '7D' },
   { key: '30d', label: '30D' },
 ];
-const API_KEY_USAGE_BATCH_SIZE = 5;
-
 function formatDateParam(value: Date) {
   const year = value.getFullYear();
   const month = String(value.getMonth() + 1).padStart(2, '0');
@@ -163,23 +161,32 @@ function GridField({ label, value }: { label: string; value: string }) {
   );
 }
 
-function MetricCard({ label, value }: { label: string; value: string }) {
-  return (
-    <View
-      style={{
-        flex: 1,
-        backgroundColor: colors.muted,
-        borderRadius: 12,
-        paddingHorizontal: 12,
-        paddingVertical: 12,
-        borderWidth: 1,
-        borderColor: colors.border,
-      }}
-    >
+function MetricCard({ label, value, onPress }: { label: string; value: string; onPress?: () => void }) {
+  const content = (
+    <>
       <Text style={{ fontSize: 12, color: colors.subtext }}>{label}</Text>
       <Text style={{ marginTop: 6, fontSize: 16, fontWeight: '700', color: colors.text }}>{value}</Text>
-    </View>
+    </>
   );
+  const style = {
+    flex: 1,
+    backgroundColor: colors.muted,
+    borderRadius: 12,
+    paddingHorizontal: 12,
+    paddingVertical: 12,
+    borderWidth: 1,
+    borderColor: colors.border,
+  };
+
+  if (onPress) {
+    return (
+      <Pressable onPress={onPress} style={({ pressed }) => [style, { opacity: pressed ? 0.78 : 1 }]}>
+        {content}
+      </Pressable>
+    );
+  }
+
+  return <View style={style}>{content}</View>;
 }
 
 function StatusBadge({ text }: { text: string }) {
@@ -219,6 +226,7 @@ function KeyItem({
   monthUsage,
   usageLoading,
   usageError,
+  onPressMonthUsage,
 }: {
   item: AdminApiKey;
   copied: boolean;
@@ -227,6 +235,7 @@ function KeyItem({
   monthUsage?: UsageStats;
   usageLoading?: boolean;
   usageError?: boolean;
+  onPressMonthUsage: () => void;
 }) {
   return (
     <View
@@ -254,7 +263,7 @@ function KeyItem({
 
       <View style={{ flexDirection: 'row', gap: 8, marginTop: 12 }}>
         <MetricCard label="今日花费" value={usageLoading ? '加载中' : formatUsageCost(todayUsage)} />
-        <MetricCard label="近30天花费" value={usageLoading ? '加载中' : formatUsageCost(monthUsage)} />
+        <MetricCard label="近30天花费" value={usageLoading ? '加载中' : formatUsageCost(monthUsage)} onPress={onPressMonthUsage} />
       </View>
       {usageError ? <Text style={{ marginTop: 8, fontSize: 12, color: colors.errorText }}>部分用量加载失败</Text> : null}
 
@@ -677,6 +686,17 @@ export default function UserDetailScreen() {
                         monthUsage={usage?.month}
                         usageLoading={loadingKeyUsageIds[item.id] ?? !usage}
                         usageError={Boolean(usage?.todayError || usage?.monthError)}
+                        onPressMonthUsage={() =>
+                          router.push({
+                            pathname: '/users/[id]/api-keys/[keyId]',
+                            params: {
+                              id: String(userId),
+                              keyId: String(item.id),
+                              keyName: item.name || `Key #${item.id}`,
+                              userEmail: user?.email || '',
+                            },
+                          })
+                        }
                       />
                     );
                   })}

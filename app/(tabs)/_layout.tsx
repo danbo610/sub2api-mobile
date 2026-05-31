@@ -1,5 +1,5 @@
 import { Redirect, Tabs } from 'expo-router';
-import { ChartNoAxesCombined, Settings2, Users } from 'lucide-react-native';
+import { ChartNoAxesCombined, Trophy, Users } from 'lucide-react-native';
 
 import { adminConfigState, hasAuthenticatedAdminSession } from '@/src/store/admin-config';
 
@@ -15,7 +15,7 @@ export default function TabsLayout() {
 
   return (
     <Tabs
-      initialRouteName={hasAccount ? 'monitor' : 'settings'}
+      initialRouteName="monitor"
       screenOptions={{
         headerShown: false,
         tabBarActiveTintColor: '#1d5f55',
@@ -50,10 +50,16 @@ export default function TabsLayout() {
         }}
       />
       <Tabs.Screen
+        name="ranking"
+        options={{
+          title: '排行榜',
+          tabBarIcon: ({ color, size }) => <Trophy color={color} size={size} />,
+        }}
+      />
+      <Tabs.Screen
         name="settings"
         options={{
-          title: '服务器',
-          tabBarIcon: ({ color, size }) => <Settings2 color={color} size={size} />,
+          href: null,
         }}
       />
       <Tabs.Screen name="groups" options={{ href: null }} />
