@@ -5,6 +5,7 @@ import {
   aggregateTrendPoints,
   buildDailyUsageRows,
   getApiKeyUsageDateRange,
+  getApiKeyDailyLimitProgress,
   getTopApiKeyUsageRows,
   formatIpLocation,
   formatReasoningEffort,
@@ -117,6 +118,34 @@ describe('api key usage helpers', () => {
       granularity: 'day',
     });
     assert.equal(getApiKeyUsageDateRange('24h', now).granularity, 'hour');
+  });
+
+  it('builds API key daily limit progress from today cost', () => {
+    assert.equal(getApiKeyDailyLimitProgress({ rate_limit_1d: 0 }, 45.04), null);
+
+    assert.deepEqual(getApiKeyDailyLimitProgress({ rate_limit_1d: 100 }, 45.04), {
+      limit: 100,
+      used: 45.04,
+      percent: 45.04,
+      cappedPercent: 45.04,
+      exceeded: false,
+    });
+
+    assert.deepEqual(getApiKeyDailyLimitProgress({ rate_limit_1d: 100 }, 100), {
+      limit: 100,
+      used: 100,
+      percent: 100,
+      cappedPercent: 100,
+      exceeded: true,
+    });
+
+    assert.deepEqual(getApiKeyDailyLimitProgress({ rate_limit_1d: 100 }, 125), {
+      limit: 100,
+      used: 125,
+      percent: 125,
+      cappedPercent: 100,
+      exceeded: true,
+    });
   });
 
   it('sorts top API key usage rows by total cost descending', () => {

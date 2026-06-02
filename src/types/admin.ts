@@ -169,6 +169,9 @@ export type AdminApiKey = {
   expires_at?: string | null;
   created_at?: string;
   updated_at?: string;
+  rate_limit_5h?: number;
+  rate_limit_1d?: number;
+  rate_limit_7d?: number;
   usage_5h?: number;
   usage_1d?: number;
   usage_7d?: number;

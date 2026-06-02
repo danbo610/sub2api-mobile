@@ -6,7 +6,13 @@ import { Alert, Pressable, ScrollView, Text, TextInput, View } from 'react-nativ
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { LineTrendChart } from '@/src/components/line-trend-chart';
-import { API_KEY_USAGE_BATCH_SIZE, formatIpLocation, formatReasoningEffort, sortApiKeysByLastUsedDesc } from '@/src/lib/api-key-usage';
+import {
+  API_KEY_USAGE_BATCH_SIZE,
+  formatIpLocation,
+  formatReasoningEffort,
+  getApiKeyDailyLimitProgress,
+  sortApiKeysByLastUsedDesc,
+} from '@/src/lib/api-key-usage';
 import {
   getApiKeyUsageSummary,
   getDashboardSnapshot,
@@ -97,6 +103,11 @@ function formatMoney(value?: number | null) {
 function formatUsageCost(stats?: { total_account_cost?: number | null; total_actual_cost?: number | null; total_cost?: number | null }) {
   const value = Number(stats?.total_account_cost ?? stats?.total_actual_cost ?? stats?.total_cost ?? 0);
   return `$${value.toFixed(4)}`;
+}
+
+function getUsageCostValue(stats?: { total_account_cost?: number | null; total_actual_cost?: number | null; total_cost?: number | null }) {
+  const value = Number(stats?.total_account_cost ?? stats?.total_actual_cost ?? stats?.total_cost ?? 0);
+  return Number.isFinite(value) ? value : 0;
 }
 
 function formatTokenValue(value?: number | null) {
@@ -201,6 +212,48 @@ function MetricCard({ label, value, onPress }: { label: string; value: string; o
   }
 
   return <View style={style}>{content}</View>;
+}
+
+function DailyLimitMetricCard({ item, todayUsage, loading }: { item: AdminApiKey; todayUsage?: UsageStats; loading?: boolean }) {
+  const todayCost = getUsageCostValue(todayUsage);
+  const progress = getApiKeyDailyLimitProgress(item, loading ? 0 : todayCost);
+
+  if (!progress) {
+    return <MetricCard label="今日花费" value={loading ? '加载中' : formatUsageCost(todayUsage)} />;
+  }
+
+  const progressColor = progress.exceeded ? colors.errorText : '#269b62';
+  const amountText = loading ? '加载中' : `${formatMoney(progress.used)} / ${formatMoney(progress.limit)}`;
+
+  return (
+    <View
+      style={{
+        flex: 1,
+        backgroundColor: colors.muted,
+        borderRadius: 12,
+        paddingHorizontal: 12,
+        paddingVertical: 12,
+        borderWidth: 1,
+        borderColor: colors.border,
+      }}
+    >
+      <Text style={{ fontSize: 12, color: colors.subtext }}>今日花费</Text>
+      <View style={{ marginTop: 6, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
+        <Text style={{ fontSize: 13, color: colors.subtext }}>1d</Text>
+        <Text
+          numberOfLines={1}
+          adjustsFontSizeToFit
+          minimumFontScale={0.8}
+          style={{ flex: 1, textAlign: 'right', fontSize: 15, fontWeight: '700', color: colors.text }}
+        >
+          {amountText}
+        </Text>
+      </View>
+      <View style={{ marginTop: 7, height: 6, borderRadius: 999, backgroundColor: '#dedbd7', overflow: 'hidden' }}>
+        <View style={{ width: `${loading ? 0 : progress.cappedPercent}%`, height: '100%', borderRadius: 999, backgroundColor: progressColor }} />
+      </View>
+    </View>
+  );
 }
 
 function StatusBadge({ text }: { text: string }) {
@@ -407,7 +460,7 @@ function KeyItem({
       <Text style={{ marginTop: 10, fontSize: 12, lineHeight: 18, color: colors.text }}>{item.key || '--'}</Text>
 
       <View style={{ flexDirection: 'row', gap: 8, marginTop: 12 }}>
-        <MetricCard label="今日花费" value={usageLoading ? '加载中' : formatUsageCost(todayUsage)} />
+        <DailyLimitMetricCard item={item} todayUsage={todayUsage} loading={usageLoading} />
         <MetricCard label="近30天花费" value={usageLoading ? '加载中' : formatUsageCost(monthUsage)} onPress={onPressMonthUsage} />
       </View>
       {usageError ? <Text style={{ marginTop: 8, fontSize: 12, color: colors.errorText }}>部分用量加载失败</Text> : null}

@@ -23,6 +23,14 @@ export type ApiKeyUsageDailyRow = UsageMetricTotals & {
   date: string;
 };
 
+export type ApiKeyDailyLimitProgress = {
+  limit: number;
+  used: number;
+  percent: number;
+  cappedPercent: number;
+  exceeded: boolean;
+};
+
 const emptyUsageTotals: UsageMetricTotals = {
   requests: 0,
   inputTokens: 0,
@@ -86,6 +94,22 @@ export function trendPointToUsageTotals(point: TrendPoint): UsageMetricTotals {
 
 export function aggregateTrendPoints(points: TrendPoint[]): UsageMetricTotals {
   return points.reduce((total, point) => addUsageTotals(total, trendPointToUsageTotals(point)), createEmptyUsageTotals());
+}
+
+export function getApiKeyDailyLimitProgress(apiKey: Pick<AdminApiKey, 'rate_limit_1d'>, todayCost?: number | null): ApiKeyDailyLimitProgress | null {
+  const limit = toNumber(apiKey.rate_limit_1d);
+  if (limit <= 0) return null;
+
+  const used = Math.max(toNumber(todayCost), 0);
+  const percent = (used / limit) * 100;
+
+  return {
+    limit,
+    used,
+    percent,
+    cappedPercent: Math.max(0, Math.min(percent, 100)),
+    exceeded: percent >= 100,
+  };
 }
 
 export function buildDailyUsageRows(points: TrendPoint[], startDate: string, endDate: string): ApiKeyUsageDailyRow[] {
