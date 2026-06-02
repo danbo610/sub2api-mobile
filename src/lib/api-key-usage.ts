@@ -1,6 +1,6 @@
 import type { AdminApiKey, TrendPoint } from '@/src/types/admin';
 
-export const API_KEY_USAGE_BATCH_SIZE = 5;
+export const API_KEY_USAGE_BATCH_SIZE = 10;
 
 export type ApiKeyUsageRangeKey = 'today' | '24h' | '7d' | '30d';
 

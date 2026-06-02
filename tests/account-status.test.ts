@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 
-import { getAccountError, getAccountErrorMessage, getAccountVisualStatus } from '../src/lib/account-status';
+import { getAccountError, getAccountErrorMessage, getAccountVisualStatus, parseAccountStatusFilter } from '../src/lib/account-status';
 
 describe('account visual status', () => {
   it('marks Codex usage-limited accounts as limited', () => {
@@ -32,5 +32,12 @@ describe('account visual status', () => {
     assert.equal(getAccountErrorMessage({ status: 'error', error_message: 'failed' }), 'failed');
     assert.equal(getAccountErrorMessage({ status: 'error' }), '账号状态异常，后台未返回详细原因');
     assert.equal(getAccountErrorMessage({ status: 'active' }), '');
+  });
+
+  it('parses account status filter route params safely', () => {
+    assert.equal(parseAccountStatusFilter('paused'), 'paused');
+    assert.equal(parseAccountStatusFilter(['error']), 'error');
+    assert.equal(parseAccountStatusFilter('unknown'), 'all');
+    assert.equal(parseAccountStatusFilter(undefined), 'all');
   });
 });

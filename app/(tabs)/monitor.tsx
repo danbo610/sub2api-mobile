@@ -8,7 +8,7 @@ import { BarChartCard } from '@/src/components/bar-chart-card';
 import { formatTokenValue } from '@/src/lib/formatters';
 import { DonutChartCard } from '@/src/components/donut-chart-card';
 import { LineTrendChart } from '@/src/components/line-trend-chart';
-import { getAccountVisualStatus } from '@/src/lib/account-status';
+import { getAccountVisualStatus, type AccountStatusFilter } from '@/src/lib/account-status';
 import { getAdminSettings, getDashboardModels, getDashboardStats, getDashboardTrend, listAccounts } from '@/src/services/admin';
 import { adminConfigState, hasAuthenticatedAdminSession } from '@/src/store/admin-config';
 
@@ -41,6 +41,13 @@ const RANGE_TITLE_MAP: Record<RangeKey, string> = {
   '7d': '7D',
   '30d': '30D',
 };
+
+function openAccountsOverview(filter: AccountStatusFilter = 'all') {
+  router.push({
+    pathname: '/accounts/overview',
+    params: { filter },
+  });
+}
 
 function getDateRange(rangeKey: RangeKey) {
   const end = new Date();
@@ -318,37 +325,37 @@ export default function MonitorScreen() {
               right={(
                 <Pressable
                   style={{ alignSelf: 'flex-start', backgroundColor: colors.border, borderRadius: 12, paddingHorizontal: 12, paddingVertical: 8 }}
-                  onPress={() => router.push('/accounts/overview')}
+                  onPress={() => openAccountsOverview()}
                 >
                   <Text style={{ color: '#4e463e', fontSize: 12, fontWeight: '700' }}>账号清单</Text>
                 </Pressable>
               )}
             >
-              <Pressable onPress={() => router.push('/accounts/overview')}>
+              <View>
                 <View style={{ flexDirection: 'row', gap: 8 }}>
-                  <View style={{ flex: 1, backgroundColor: colors.mutedCard, borderRadius: 14, padding: 12 }}>
+                  <Pressable style={{ flex: 1, backgroundColor: colors.mutedCard, borderRadius: 14, padding: 12 }} onPress={() => openAccountsOverview('all')}>
                     <Text style={{ fontSize: 11, color: '#8a8072' }}>全部</Text>
                     <Text style={{ marginTop: 6, fontSize: 18, fontWeight: '700', color: colors.text }}>{formatNumber(totalAccounts)}</Text>
-                  </View>
-                  <View style={{ flex: 1, backgroundColor: colors.mutedCard, borderRadius: 14, padding: 12 }}>
+                  </Pressable>
+                  <Pressable style={{ flex: 1, backgroundColor: colors.mutedCard, borderRadius: 14, padding: 12 }} onPress={() => openAccountsOverview('active')}>
                     <Text style={{ fontSize: 11, color: '#8a8072' }}>正常</Text>
                     <Text style={{ marginTop: 6, fontSize: 18, fontWeight: '700', color: colors.text }}>{formatNumber(activeAccounts)}</Text>
-                  </View>
-                  <View style={{ flex: 1, backgroundColor: colors.mutedCard, borderRadius: 14, padding: 12 }}>
+                  </Pressable>
+                  <Pressable style={{ flex: 1, backgroundColor: colors.mutedCard, borderRadius: 14, padding: 12 }} onPress={() => openAccountsOverview('paused')}>
                     <Text style={{ fontSize: 11, color: '#8a8072' }}>暂停</Text>
                     <Text style={{ marginTop: 6, fontSize: 18, fontWeight: '700', color: colors.text }}>{formatNumber(pausedAccounts)}</Text>
-                  </View>
-                  <View style={{ flex: 1, backgroundColor: colors.dangerBg, borderRadius: 14, padding: 12 }}>
+                  </Pressable>
+                  <Pressable style={{ flex: 1, backgroundColor: colors.dangerBg, borderRadius: 14, padding: 12 }} onPress={() => openAccountsOverview('error')}>
                     <Text style={{ fontSize: 11, color: colors.danger }}>异常</Text>
                     <Text style={{ marginTop: 6, fontSize: 18, fontWeight: '700', color: colors.danger }}>{formatNumber(errorAccounts)}</Text>
-                  </View>
-                  <View style={{ flex: 1, backgroundColor: colors.mutedCard, borderRadius: 14, padding: 12 }}>
+                  </Pressable>
+                  <Pressable style={{ flex: 1, backgroundColor: colors.mutedCard, borderRadius: 14, padding: 12 }} onPress={() => openAccountsOverview('limited')}>
                     <Text style={{ fontSize: 11, color: '#8a8072' }}>限流</Text>
                     <Text style={{ marginTop: 6, fontSize: 18, fontWeight: '700', color: colors.text }}>{formatNumber(limitedAccounts)}</Text>
-                  </View>
+                  </Pressable>
                 </View>
                 <Text style={{ marginTop: 10, fontSize: 12, color: colors.subtext }}>状态口径与账号清单保持一致；点击进入账号清单。</Text>
-              </Pressable>
+              </View>
             </Section>
 
             {throughputPoints.length > 1 ? (

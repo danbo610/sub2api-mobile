@@ -1,13 +1,20 @@
 import { useMutation, useQueries, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useLocalSearchParams } from 'expo-router';
 import { KeyRound, Search, ShieldCheck, ShieldOff } from 'lucide-react-native';
-import { useCallback, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { FlatList, Pressable, RefreshControl, Text, TextInput, View } from 'react-native';
 import type { Edge } from 'react-native-safe-area-context';
 
 import { ListCard } from '@/src/components/list-card';
 import { ScreenShell } from '@/src/components/screen-shell';
 import { useDebouncedValue } from '@/src/hooks/use-debounced-value';
-import { getAccountError, getAccountErrorMessage, getAccountVisualStatus, type AccountStatusFilter } from '@/src/lib/account-status';
+import {
+  getAccountError,
+  getAccountErrorMessage,
+  getAccountVisualStatus,
+  parseAccountStatusFilter,
+  type AccountStatusFilter,
+} from '@/src/lib/account-status';
 import {
   formatRelativeTime,
   formatUsageWindowReset,
@@ -47,14 +54,19 @@ function AccountTestResultPanel({ result }: { result: AccountTestResult }) {
 }
 
 export function AccountsListScreen({ safeAreaEdges }: AccountsListScreenProps) {
+  const { filter: routeFilter } = useLocalSearchParams<{ filter?: string | string[] }>();
   const [searchText, setSearchText] = useState('');
-  const [filter, setFilter] = useState<AccountStatusFilter>('all');
+  const [filter, setFilter] = useState<AccountStatusFilter>(() => parseAccountStatusFilter(routeFilter));
   const [usageSort, setUsageSort] = useState<UsageSort>('usage-desc');
   const [testingAccountId, setTestingAccountId] = useState<number | null>(null);
   const [testFeedbackByAccountId, setTestFeedbackByAccountId] = useState<Record<number, AccountTestResult>>({});
   const [togglingAccountId, setTogglingAccountId] = useState<number | null>(null);
   const keyword = useDebouncedValue(searchText.trim(), 300);
   const queryClient = useQueryClient();
+
+  useEffect(() => {
+    setFilter(parseAccountStatusFilter(routeFilter));
+  }, [routeFilter]);
 
   const accountsQuery = useQuery({
     queryKey: ['accounts', keyword],
@@ -195,9 +207,10 @@ export function AccountsListScreen({ safeAreaEdges }: AccountsListScreenProps) {
       const visualStatus = getAccountVisualStatus(account);
       const statusText = visualStatus.label;
       const groupsText = account.groups?.map((group) => group.name).filter(Boolean).slice(0, 3).join(' · ') || '未分组';
-      const capacityText = `${account.current_concurrency ?? 0} / ${account.concurrency ?? 0}`;
+      const currentConcurrency = account.current_concurrency ?? 0;
+      const capacityText = `${currentConcurrency} / ${account.concurrency ?? 0}`;
       const createdAtText = formatDisplayTime(account.created_at);
-      const accountCapacityText = `容量 ${capacityText} · 创建时间 ${createdAtText}`;
+      const isBusy = currentConcurrency > 0;
       const accountErrorMessage = getAccountErrorMessage(account);
       const todayStats = todayByAccountId.get(account.id) ?? { requests: 0, tokens: 0, cost: 0 };
       const usageWindows = getAccountUsageWindows(account);
@@ -277,7 +290,12 @@ export function AccountsListScreen({ safeAreaEdges }: AccountsListScreenProps) {
 
               <Text className="text-xs text-[#7d7468]">优先级 {account.priority ?? 0} · 倍率 {(account.rate_multiplier ?? 1).toFixed(2)}x</Text>
               <Text className="text-xs text-[#7d7468]" numberOfLines={1}>分组 {groupsText}</Text>
-              <Text className="text-xs text-[#7d7468]" numberOfLines={1}>{accountCapacityText}</Text>
+              <View className="flex-row flex-wrap items-center gap-1.5">
+                <View className={isBusy ? 'rounded-lg bg-[#fff0b8] px-2 py-1' : 'rounded-lg bg-[#f1ece2] px-2 py-1'}>
+                  <Text className={isBusy ? 'text-xs font-semibold text-[#a66a00]' : 'text-xs text-[#7d7468]'}>容量 {capacityText}</Text>
+                </View>
+                <Text className="text-xs text-[#7d7468]" numberOfLines={1}>· 创建时间 {createdAtText}</Text>
+              </View>
               {accountErrorMessage ? <Text className="text-xs text-[#a4512b]">异常信息：{accountErrorMessage}</Text> : null}
 
               <View className="flex-row gap-2">

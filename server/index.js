@@ -83,7 +83,7 @@ app.get('/healthz', (_req, res) => {
 app.get('/api/v1/keys', async (req, res) => {
   try {
     const page = Math.max(Number(req.query.page || 1), 1);
-    const pageSize = Math.min(Math.max(Number(req.query.page_size || 10), 1), 100);
+    const pageSize = Math.min(Math.max(Number(req.query.page_size || 10), 1), 1000);
     const search = String(req.query.search || '').trim().toLowerCase();
     const status = String(req.query.status || '').trim();
 
@@ -92,7 +92,7 @@ app.get('/api/v1/keys', async (req, res) => {
     let totalPages = 1;
 
     do {
-      const userPage = await fetchAdminJson(`/api/v1/admin/users?page=${currentPage}&page_size=100`);
+      const userPage = await fetchAdminJson(`/api/v1/admin/users?page=${currentPage}&page_size=1000`);
       users.push(...(userPage.items || []));
       totalPages = userPage.pages || 1;
       currentPage += 1;
@@ -100,7 +100,7 @@ app.get('/api/v1/keys', async (req, res) => {
 
     const keyPages = await Promise.all(
       users.map(async (user) => {
-        const result = await fetchAdminJson(`/api/v1/admin/users/${user.id}/api-keys?page=1&page_size=100`);
+        const result = await fetchAdminJson(`/api/v1/admin/users/${user.id}/api-keys?page=1&page_size=1000`);
         return (result.items || []).map((item) => ({
           ...item,
           user: {

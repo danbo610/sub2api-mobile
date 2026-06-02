@@ -9,6 +9,20 @@ export type AccountVisualStatus = {
   badgeTone: 'success' | 'muted' | 'danger';
 };
 
+export function parseAccountStatusFilter(value: unknown): AccountStatusFilter {
+  const rawValue = Array.isArray(value) ? value[0] : value;
+
+  switch (rawValue) {
+    case 'active':
+    case 'limited':
+    case 'paused':
+    case 'error':
+      return rawValue;
+    default:
+      return 'all';
+  }
+}
+
 export function getAccountError(account: Pick<AdminAccount, 'status' | 'error_message'>) {
   return Boolean(`${account.status ?? ''}`.toLowerCase() === 'error' || account.error_message);
 }

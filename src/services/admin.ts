@@ -209,7 +209,7 @@ export function listUsersPage(params: { page?: number; page_size?: number; searc
   return adminFetch<PaginatedData<AdminUser>>(
     `/api/v1/admin/users${buildQuery({
       page: params.page ?? 1,
-      page_size: params.page_size ?? 100,
+      page_size: params.page_size ?? 1000,
       search: params.search?.trim(),
     })}`
   );
@@ -219,7 +219,7 @@ export function listApiKeys(params: { page?: number; page_size?: number; search?
   return adminFetch<PaginatedData<AdminApiKey>>(
     `/api/v1/keys${buildQuery({
       page: params.page ?? 1,
-      page_size: params.page_size ?? 100,
+      page_size: params.page_size ?? 1000,
       search: params.search?.trim(),
       status: params.status,
     })}`
@@ -227,12 +227,12 @@ export function listApiKeys(params: { page?: number; page_size?: number; search?
 }
 
 export async function listAllApiKeys(params: { search?: string; status?: string } = {}) {
-  const firstPage = await listApiKeys({ ...params, page: 1, page_size: 100 });
+  const firstPage = await listApiKeys({ ...params, page: 1, page_size: 1000 });
   const items = [...(firstPage.items ?? [])];
   const pages = Math.max(Number(firstPage.pages ?? 1), 1);
 
   for (let page = 2; page <= pages; page += 1) {
-    const nextPage = await listApiKeys({ ...params, page, page_size: 100 });
+    const nextPage = await listApiKeys({ ...params, page, page_size: 1000 });
     items.push(...(nextPage.items ?? []));
   }
 
@@ -240,12 +240,12 @@ export async function listAllApiKeys(params: { search?: string; status?: string 
 }
 
 export async function listAllUserApiKeysFallback() {
-  const firstPage = await listUsersPage({ page: 1, page_size: 100 });
+  const firstPage = await listUsersPage({ page: 1, page_size: 1000 });
   const users = [...(firstPage.items ?? [])];
   const pages = Math.max(Number(firstPage.pages ?? 1), 1);
 
   for (let page = 2; page <= pages; page += 1) {
-    const nextPage = await listUsersPage({ page, page_size: 100 });
+    const nextPage = await listUsersPage({ page, page_size: 1000 });
     users.push(...(nextPage.items ?? []));
   }
 
@@ -282,7 +282,7 @@ export function getUserUsage(userId: number, period: 'day' | 'week' | 'month' = 
 }
 
 export function listUserApiKeys(userId: number) {
-  return adminFetch<PaginatedData<AdminApiKey>>(`/api/v1/admin/users/${userId}/api-keys${buildQuery({ page: 1, page_size: 100 })}`);
+  return adminFetch<PaginatedData<AdminApiKey>>(`/api/v1/admin/users/${userId}/api-keys${buildQuery({ page: 1, page_size: 1000 })}`);
 }
 
 export function updateUserBalance(
