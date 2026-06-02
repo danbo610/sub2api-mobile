@@ -28,7 +28,6 @@ type RankingRow = UsageMetricTotals & {
   apiKeyId: number;
   apiKeyName: string;
   userId: number;
-  userLabel?: string;
   groupLabel?: string;
   lastUsedText?: string;
 };
@@ -73,10 +72,6 @@ function getApiKeyName(item: AdminApiKey) {
   return item.name?.trim() || item.key?.slice(0, 16) || `Key #${item.id}`;
 }
 
-function getUserLabel(item: AdminApiKey) {
-  return item.user?.email || item.user?.username || (item.user_id ? `用户 #${item.user_id}` : undefined);
-}
-
 async function loadAllApiKeys() {
   try {
     return await listAllApiKeys();
@@ -104,7 +99,6 @@ async function getApiKeyRankingRow(item: AdminApiKey, range: ApiKeyUsageRange): 
     apiKeyId: item.id,
     apiKeyName: getApiKeyName(item),
     userId,
-    userLabel: getUserLabel(item),
     groupLabel: item.group?.name,
     lastUsedText: item.last_used_at ? formatDisplayTime(item.last_used_at) : undefined,
   };
@@ -299,7 +293,7 @@ export default function RankingScreen() {
                       key={item.apiKeyId}
                       index={index + 1}
                       title={item.apiKeyName}
-                      subtitle={[item.userLabel, item.groupLabel, item.lastUsedText].filter(Boolean).join(' · ')}
+                      subtitle={[item.groupLabel, item.lastUsedText].filter(Boolean).join(' · ')}
                       totals={item}
                     />
                   ))}
