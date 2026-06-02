@@ -222,7 +222,7 @@ function DailyLimitMetricCard({ item, todayUsage, loading }: { item: AdminApiKey
     return <MetricCard label="今日花费" value={loading ? '加载中' : formatUsageCost(todayUsage)} />;
   }
 
-  const progressColor = progress.exceeded ? colors.errorText : '#269b62';
+  const progressColor = progress.exceeded ? colors.errorText : progress.warning ? '#c68a1f' : '#269b62';
   const amountText = loading ? '加载中' : `${formatMoney(progress.used)} / ${formatMoney(progress.limit)}`;
 
   return (

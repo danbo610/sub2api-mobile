@@ -128,6 +128,16 @@ describe('api key usage helpers', () => {
       used: 45.04,
       percent: 45.04,
       cappedPercent: 45.04,
+      warning: false,
+      exceeded: false,
+    });
+
+    assert.deepEqual(getApiKeyDailyLimitProgress({ rate_limit_1d: 100 }, 90), {
+      limit: 100,
+      used: 90,
+      percent: 90,
+      cappedPercent: 90,
+      warning: true,
       exceeded: false,
     });
 
@@ -136,6 +146,7 @@ describe('api key usage helpers', () => {
       used: 100,
       percent: 100,
       cappedPercent: 100,
+      warning: false,
       exceeded: true,
     });
 
@@ -144,6 +155,7 @@ describe('api key usage helpers', () => {
       used: 125,
       percent: 125,
       cappedPercent: 100,
+      warning: false,
       exceeded: true,
     });
   });

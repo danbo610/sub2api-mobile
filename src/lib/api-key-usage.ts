@@ -28,6 +28,7 @@ export type ApiKeyDailyLimitProgress = {
   used: number;
   percent: number;
   cappedPercent: number;
+  warning: boolean;
   exceeded: boolean;
 };
 
@@ -108,6 +109,7 @@ export function getApiKeyDailyLimitProgress(apiKey: Pick<AdminApiKey, 'rate_limi
     used,
     percent,
     cappedPercent: Math.max(0, Math.min(percent, 100)),
+    warning: percent >= 90 && percent < 100,
     exceeded: percent >= 100,
   };
 }
