@@ -15,7 +15,7 @@ import {
   type ApiKeyUsageRangeKey,
   type UsageMetricTotals,
 } from '@/src/lib/api-key-usage';
-import { formatCost, formatInteger, formatTokenValue } from '@/src/lib/formatters';
+import { formatCost, formatDisplayTime, formatInteger, formatTokenValue } from '@/src/lib/formatters';
 import { getDashboardSnapshot, listAllApiKeys, listAllUserApiKeysFallback } from '@/src/services/admin';
 import { adminConfigState, hasAuthenticatedAdminSession } from '@/src/store/admin-config';
 import type { AdminApiKey } from '@/src/types/admin';
@@ -30,6 +30,7 @@ type RankingRow = UsageMetricTotals & {
   userId: number;
   userLabel?: string;
   groupLabel?: string;
+  lastUsedText?: string;
 };
 
 const colors = {
@@ -105,6 +106,7 @@ async function getApiKeyRankingRow(item: AdminApiKey, range: ApiKeyUsageRange): 
     userId,
     userLabel: getUserLabel(item),
     groupLabel: item.group?.name,
+    lastUsedText: item.last_used_at ? formatDisplayTime(item.last_used_at) : undefined,
   };
 }
 
@@ -297,7 +299,7 @@ export default function RankingScreen() {
                       key={item.apiKeyId}
                       index={index + 1}
                       title={item.apiKeyName}
-                      subtitle={[item.userLabel, item.groupLabel].filter(Boolean).join(' · ')}
+                      subtitle={[item.userLabel, item.groupLabel, item.lastUsedText].filter(Boolean).join(' · ')}
                       totals={item}
                     />
                   ))}
