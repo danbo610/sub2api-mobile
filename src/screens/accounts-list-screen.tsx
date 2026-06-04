@@ -26,6 +26,7 @@ import { getAccountTodayStats, listAccounts, setAccountSchedulable, testAccount 
 import type { AccountTestResult } from '@/src/lib/account-test';
 
 type UsageSort = 'usage-desc' | 'usage-asc';
+type GroupFilterKey = 'all' | `group:${number}` | 'ungrouped';
 
 type AccountTodaySummary = {
   requests: number;
@@ -58,6 +59,7 @@ export function AccountsListScreen({ safeAreaEdges }: AccountsListScreenProps) {
   const [searchText, setSearchText] = useState('');
   const [filter, setFilter] = useState<AccountStatusFilter>(() => parseAccountStatusFilter(routeFilter));
   const [usageSort, setUsageSort] = useState<UsageSort>('usage-desc');
+  const [groupFilter, setGroupFilter] = useState<GroupFilterKey>('all');
   const [testingAccountId, setTestingAccountId] = useState<number | null>(null);
   const [testFeedbackByAccountId, setTestFeedbackByAccountId] = useState<Record<number, AccountTestResult>>({});
   const [togglingAccountId, setTogglingAccountId] = useState<number | null>(null);
@@ -106,18 +108,72 @@ export function AccountsListScreen({ safeAreaEdges }: AccountsListScreenProps) {
     return next;
   }, [accountCostQueries, items]);
 
-  const filteredItems = useMemo(() => {
-    const statusMatched = items.filter((account) => {
-      const visualStatus = getAccountVisualStatus(account);
-      if (filter === 'all') return true;
-      if (filter === 'active') return visualStatus.filterKey === 'active';
-      if (filter === 'limited') return visualStatus.filterKey === 'limited';
-      if (filter === 'paused') return visualStatus.filterKey === 'paused';
-      if (filter === 'error') return visualStatus.filterKey === 'error';
-      return true;
+  const statusMatchedItems = useMemo(
+    () =>
+      items.filter((account) => {
+        const visualStatus = getAccountVisualStatus(account);
+        if (filter === 'all') return true;
+        if (filter === 'active') return visualStatus.filterKey === 'active';
+        if (filter === 'limited') return visualStatus.filterKey === 'limited';
+        if (filter === 'paused') return visualStatus.filterKey === 'paused';
+        if (filter === 'error') return visualStatus.filterKey === 'error';
+        return true;
+      }),
+    [filter, items]
+  );
+
+  const groupOptions = useMemo(() => {
+    const grouped = new Map<number, { key: GroupFilterKey; label: string; count: number; sortName: string }>();
+    let ungroupedCount = 0;
+
+    statusMatchedItems.forEach((account) => {
+      const groups = account.groups?.filter((group) => group.id && group.name?.trim()) ?? [];
+
+      if (groups.length === 0) {
+        ungroupedCount += 1;
+        return;
+      }
+
+      groups.forEach((group) => {
+        const current = grouped.get(group.id) ?? {
+          key: `group:${group.id}` as const,
+          label: group.name.trim(),
+          count: 0,
+          sortName: group.name.trim().toLowerCase(),
+        };
+        current.count += 1;
+        grouped.set(group.id, current);
+      });
     });
 
-    const sorted = [...statusMatched].sort((left, right) => {
+    const options = [
+      { key: 'all' as const, label: '全部分组', count: statusMatchedItems.length, sortName: '' },
+      ...[...grouped.values()].sort((left, right) => left.sortName.localeCompare(right.sortName)),
+    ];
+
+    if (ungroupedCount > 0) {
+      options.push({ key: 'ungrouped' as const, label: '未分组', count: ungroupedCount, sortName: 'zzzz' });
+    }
+
+    return options;
+  }, [statusMatchedItems]);
+
+  useEffect(() => {
+    if (!groupOptions.some((option) => option.key === groupFilter)) {
+      setGroupFilter('all');
+    }
+  }, [groupFilter, groupOptions]);
+
+  const filteredItems = useMemo(() => {
+    const groupMatched = statusMatchedItems.filter((account) => {
+      if (groupFilter === 'all') return true;
+      const groups = account.groups ?? [];
+      if (groupFilter === 'ungrouped') return groups.length === 0;
+      const groupId = Number(groupFilter.replace('group:', ''));
+      return groups.some((group) => group.id === groupId);
+    });
+
+    const sorted = [...groupMatched].sort((left, right) => {
       const requestsLeft = todayByAccountId.get(left.id)?.requests ?? 0;
       const requestsRight = todayByAccountId.get(right.id)?.requests ?? 0;
       if (requestsLeft === requestsRight) {
@@ -130,7 +186,7 @@ export function AccountsListScreen({ safeAreaEdges }: AccountsListScreenProps) {
     });
 
     return sorted;
-  }, [filter, items, todayByAccountId, usageSort]);
+  }, [groupFilter, statusMatchedItems, todayByAccountId, usageSort]);
   const errorMessage = accountsQuery.error instanceof Error ? accountsQuery.error.message : '';
 
   const summary = useMemo(() => {
@@ -195,10 +251,30 @@ export function AccountsListScreen({ safeAreaEdges }: AccountsListScreenProps) {
               );
             })}
           </View>
+
+          <View className="mt-3 flex-row flex-wrap gap-2">
+            {groupOptions.map((option) => {
+              const active = groupFilter === option.key;
+              return (
+                <Pressable
+                  key={option.key}
+                  onPress={() => setGroupFilter(option.key)}
+                  className={active ? 'rounded-full bg-[#7651c8] px-3 py-2' : 'rounded-full bg-[#e7dfcf] px-3 py-2'}
+                >
+                  <Text
+                    numberOfLines={1}
+                    className={active ? 'max-w-40 text-xs font-semibold text-white' : 'max-w-40 text-xs font-semibold text-[#4e463e]'}
+                  >
+                    {option.label}({option.count})
+                  </Text>
+                </Pressable>
+              );
+            })}
+          </View>
         </View>
       </View>
     ),
-    [filter, summary.active, summary.errors, summary.limited, summary.paused, summary.total, usageSort]
+    [filter, groupFilter, groupOptions, summary.active, summary.errors, summary.limited, summary.paused, summary.total, usageSort]
   );
 
   const renderItem = useCallback(
