@@ -12,6 +12,7 @@
   },
   "include": [
     "src/lib/api-key-usage.ts",
+    "src/lib/admin-error.ts",
     "src/lib/formatters.ts",
     "src/lib/account-test.ts",
     "src/lib/account-oauth.ts",

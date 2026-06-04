@@ -1,5 +1,6 @@
 import { adminConfigState } from '@/src/store/admin-config';
 import type { ApiEnvelope } from '@/src/types/admin';
+import { formatAdminFetchError } from './admin-error';
 
 export function buildAdminRequestUrl(baseUrl: string, path: string) {
   const normalizedBase = baseUrl.trim().replace(/\/$/, '');
@@ -53,11 +54,11 @@ export async function adminFetch<T>(
   try {
     json = JSON.parse(rawText) as ApiEnvelope<T>;
   } catch {
-    throw new Error('INVALID_SERVER_RESPONSE');
+    throw new Error(response.ok ? 'INVALID_SERVER_RESPONSE' : formatAdminFetchError(undefined, rawText, response.status));
   }
 
   if (!response.ok || json.code !== 0) {
-    throw new Error(json.reason || json.message || 'REQUEST_FAILED');
+    throw new Error(formatAdminFetchError(json, rawText, response.status));
   }
 
   return json.data as T;

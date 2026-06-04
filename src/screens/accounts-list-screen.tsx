@@ -3,7 +3,19 @@ import * as Clipboard from 'expo-clipboard';
 import { useLocalSearchParams } from 'expo-router';
 import { ExternalLink, KeyRound, Search, ShieldCheck, ShieldOff } from 'lucide-react-native';
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { FlatList, Linking, Modal, Pressable, RefreshControl, Text, TextInput, View } from 'react-native';
+import {
+  FlatList,
+  KeyboardAvoidingView,
+  Linking,
+  Modal,
+  Platform,
+  Pressable,
+  RefreshControl,
+  ScrollView,
+  Text,
+  TextInput,
+  View,
+} from 'react-native';
 import type { Edge } from 'react-native-safe-area-context';
 
 import { ListCard } from '@/src/components/list-card';
@@ -606,6 +618,7 @@ export function AccountsListScreen({ safeAreaEdges }: AccountsListScreenProps) {
     () => <ListCard title="暂无账号" meta={errorMessage || '连上后这里会展示账号列表。'} icon={KeyRound} />,
     [errorMessage]
   );
+  const pastedReauthState = extractOAuthState(reauthCode);
 
   return (
     <>
@@ -615,102 +628,117 @@ export function AccountsListScreen({ safeAreaEdges }: AccountsListScreenProps) {
         visible={Boolean(reauthAccount)}
         onRequestClose={closeReauthModal}
       >
-        <View className="flex-1 justify-end" style={{ backgroundColor: 'rgba(0, 0, 0, 0.42)' }}>
-          <View className="rounded-t-[28px] bg-[#fbf8f2] px-5 pb-8 pt-5">
-            <View className="flex-row items-start justify-between gap-4">
-              <View className="flex-1">
-                <Text className="text-lg font-bold text-[#16181a]">重新授权 OpenAI</Text>
-                <Text className="mt-1 text-xs text-[#7d7468]" numberOfLines={1}>
-                  {reauthAccount?.name ?? '--'}
-                </Text>
-              </View>
-              <Pressable
-                className="rounded-full bg-[#e7dfcf] px-4 py-2"
-                disabled={reauthStep === 'submitting'}
-                onPress={closeReauthModal}
-              >
-                <Text className="text-xs font-semibold text-[#4e463e]">关闭</Text>
-              </Pressable>
-            </View>
-
-            <View className="mt-5 gap-4">
-              <View className="rounded-[18px] bg-[#f1ece2] px-4 py-4">
-                <Text className="text-[11px] font-semibold text-[#7d7468]">OAuth URL</Text>
-                <Text className="mt-2 text-sm leading-5 text-[#16181a]" numberOfLines={3}>
-                  {reauthStep === 'generating' ? '正在生成授权链接...' : reauthAuthUrl || '授权链接生成失败，请重试。'}
-                </Text>
-                <Text className="mt-2 text-[11px] text-[#7d7468]">
-                  {reauthSessionId ? `Session ${reauthSessionId.slice(0, 10)}...` : '生成后会自动保存 session。'}
-                </Text>
-              </View>
-
-              <View className="flex-row gap-2">
-                <Pressable
-                  className={reauthAuthUrl && !isReauthBusy ? 'flex-1 rounded-full bg-[#1d5f55] px-4 py-3' : 'flex-1 rounded-full bg-[#c9c2b4] px-4 py-3'}
-                  disabled={!reauthAuthUrl || isReauthBusy}
-                  onPress={() => void openAuthUrl()}
-                >
-                  <View className="flex-row items-center justify-center gap-2">
-                    <ExternalLink color="#f6f1e8" size={14} />
-                    <Text className="text-center text-xs font-semibold text-[#f6f1e8]">打开授权链接</Text>
-                  </View>
-                </Pressable>
-                <Pressable
-                  className={reauthAuthUrl && !isReauthBusy ? 'flex-1 rounded-full bg-[#e7dfcf] px-4 py-3' : 'flex-1 rounded-full bg-[#d8d0c1] px-4 py-3'}
-                  disabled={!reauthAuthUrl || isReauthBusy}
-                  onPress={() => void copyAuthUrl()}
-                >
-                  <Text className="text-center text-xs font-semibold text-[#4e463e]">复制链接</Text>
-                </Pressable>
-              </View>
-
-              <View>
-                <Text className="mb-2 text-[11px] font-semibold text-[#7d7468]">授权后的 code 或完整回调链接</Text>
-                <TextInput
-                  value={reauthCode}
-                  onChangeText={setReauthCode}
-                  placeholder="粘贴 code 或包含 code/state 的完整链接"
-                  placeholderTextColor="#9b9081"
-                  autoCapitalize="none"
-                  autoCorrect={false}
-                  multiline
-                  editable={reauthStep !== 'submitting' && reauthStep !== 'success'}
-                  className="min-h-24 rounded-[18px] bg-white px-4 py-3 text-sm leading-5 text-[#16181a]"
-                  textAlignVertical="top"
-                />
-                <Text className="mt-2 text-[11px] text-[#7d7468]">
-                  {reauthState ? '已从授权链接解析 state。' : '如果没有解析到 state，请粘贴完整回调链接。'}
-                </Text>
-              </View>
-
-              {reauthError ? <Text className="rounded-[14px] bg-[#fff0e8] px-3 py-2 text-xs text-[#a4512b]">{reauthError}</Text> : null}
-              {reauthFeedback ? <Text className="rounded-[14px] bg-[#e7f7ee] px-3 py-2 text-xs text-[#1d6b43]">{reauthFeedback}</Text> : null}
-
-              <View className="flex-row gap-2">
-                <Pressable
-                  className={reauthStep === 'submitting' || reauthStep === 'success' || !reauthAccount ? 'flex-1 rounded-full bg-[#c9c2b4] px-4 py-3' : 'flex-1 rounded-full bg-[#1b1d1f] px-4 py-3'}
-                  disabled={reauthStep === 'submitting' || reauthStep === 'success' || !reauthAccount}
-                  onPress={() => void submitReauthCode()}
-                >
-                  <Text className="text-center text-sm font-semibold text-[#f6f1e8]">
-                    {reauthStep === 'submitting' ? '正在提交...' : reauthStep === 'success' ? '已完成' : '完成授权'}
+        <KeyboardAvoidingView
+          className="flex-1 justify-end"
+          behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+          keyboardVerticalOffset={12}
+          style={{ backgroundColor: 'rgba(0, 0, 0, 0.42)' }}
+        >
+          <View className="max-h-[92%] rounded-t-[28px] bg-[#fbf8f2]">
+            <ScrollView
+              keyboardShouldPersistTaps="handled"
+              showsVerticalScrollIndicator={false}
+              contentContainerStyle={{ paddingBottom: 32, paddingHorizontal: 20, paddingTop: 20 }}
+            >
+              <View className="flex-row items-start justify-between gap-4">
+                <View className="flex-1">
+                  <Text className="text-lg font-bold text-[#16181a]">重新授权 OpenAI</Text>
+                  <Text className="mt-1 text-xs text-[#7d7468]" numberOfLines={1}>
+                    {reauthAccount?.name ?? '--'}
                   </Text>
-                </Pressable>
+                </View>
                 <Pressable
-                  className={isReauthBusy || !reauthAccount ? 'rounded-full bg-[#d8d0c1] px-4 py-3' : 'rounded-full bg-[#e7dfcf] px-4 py-3'}
-                  disabled={isReauthBusy || !reauthAccount}
-                  onPress={() => {
-                    if (reauthAccount) {
-                      void openReauthModal(reauthAccount);
-                    }
-                  }}
+                  className="rounded-full bg-[#e7dfcf] px-4 py-2"
+                  disabled={reauthStep === 'submitting'}
+                  onPress={closeReauthModal}
                 >
-                  <Text className="text-sm font-semibold text-[#4e463e]">重新生成</Text>
+                  <Text className="text-xs font-semibold text-[#4e463e]">关闭</Text>
                 </Pressable>
               </View>
-            </View>
+
+              <View className="mt-5 gap-4">
+                <View className="rounded-[18px] bg-[#f1ece2] px-4 py-4">
+                  <Text className="text-[11px] font-semibold text-[#7d7468]">OAuth URL</Text>
+                  <Text className="mt-2 text-sm leading-5 text-[#16181a]" numberOfLines={3}>
+                    {reauthStep === 'generating' ? '正在生成授权链接...' : reauthAuthUrl || '授权链接生成失败，请重试。'}
+                  </Text>
+                  <Text className="mt-2 text-[11px] text-[#7d7468]">
+                    {reauthSessionId ? `Session ${reauthSessionId.slice(0, 10)}...` : '生成后会自动保存 session。'}
+                  </Text>
+                </View>
+
+                <View className="flex-row gap-2">
+                  <Pressable
+                    className={reauthAuthUrl && !isReauthBusy ? 'flex-1 rounded-full bg-[#1d5f55] px-4 py-3' : 'flex-1 rounded-full bg-[#c9c2b4] px-4 py-3'}
+                    disabled={!reauthAuthUrl || isReauthBusy}
+                    onPress={() => void openAuthUrl()}
+                  >
+                    <View className="flex-row items-center justify-center gap-2">
+                      <ExternalLink color="#f6f1e8" size={14} />
+                      <Text className="text-center text-xs font-semibold text-[#f6f1e8]">打开授权链接</Text>
+                    </View>
+                  </Pressable>
+                  <Pressable
+                    className={reauthAuthUrl && !isReauthBusy ? 'flex-1 rounded-full bg-[#e7dfcf] px-4 py-3' : 'flex-1 rounded-full bg-[#d8d0c1] px-4 py-3'}
+                    disabled={!reauthAuthUrl || isReauthBusy}
+                    onPress={() => void copyAuthUrl()}
+                  >
+                    <Text className="text-center text-xs font-semibold text-[#4e463e]">复制链接</Text>
+                  </Pressable>
+                </View>
+
+                <View>
+                  <Text className="mb-2 text-[11px] font-semibold text-[#7d7468]">授权后的 code 或完整回调链接</Text>
+                  <TextInput
+                    value={reauthCode}
+                    onChangeText={setReauthCode}
+                    placeholder="粘贴 code 或包含 code/state 的完整链接"
+                    placeholderTextColor="#9b9081"
+                    autoCapitalize="none"
+                    autoCorrect={false}
+                    multiline
+                    editable={reauthStep !== 'submitting' && reauthStep !== 'success'}
+                    className="min-h-24 rounded-[18px] bg-white px-4 py-3 text-sm leading-5 text-[#16181a]"
+                    textAlignVertical="top"
+                  />
+                  <Text className="mt-2 text-[11px] text-[#7d7468]">
+                    {pastedReauthState
+                      ? '将从粘贴的回调链接中读取 code/state。'
+                      : reauthState
+                        ? 'state 已准备好，请粘贴授权后的 code。'
+                        : '如果没有生成 state，请粘贴完整回调链接。'}
+                  </Text>
+                </View>
+
+                {reauthError ? <Text className="rounded-[14px] bg-[#fff0e8] px-3 py-2 text-xs leading-5 text-[#a4512b]">{reauthError}</Text> : null}
+                {reauthFeedback ? <Text className="rounded-[14px] bg-[#e7f7ee] px-3 py-2 text-xs text-[#1d6b43]">{reauthFeedback}</Text> : null}
+
+                <View className="flex-row gap-2">
+                  <Pressable
+                    className={reauthStep === 'submitting' || reauthStep === 'success' || !reauthAccount ? 'flex-1 rounded-full bg-[#c9c2b4] px-4 py-3' : 'flex-1 rounded-full bg-[#1b1d1f] px-4 py-3'}
+                    disabled={reauthStep === 'submitting' || reauthStep === 'success' || !reauthAccount}
+                    onPress={() => void submitReauthCode()}
+                  >
+                    <Text className="text-center text-sm font-semibold text-[#f6f1e8]">
+                      {reauthStep === 'submitting' ? '正在提交...' : reauthStep === 'success' ? '已完成' : '完成授权'}
+                    </Text>
+                  </Pressable>
+                  <Pressable
+                    className={isReauthBusy || !reauthAccount ? 'rounded-full bg-[#d8d0c1] px-4 py-3' : 'rounded-full bg-[#e7dfcf] px-4 py-3'}
+                    disabled={isReauthBusy || !reauthAccount}
+                    onPress={() => {
+                      if (reauthAccount) {
+                        void openReauthModal(reauthAccount);
+                      }
+                    }}
+                  >
+                    <Text className="text-sm font-semibold text-[#4e463e]">重新生成</Text>
+                  </Pressable>
+                </View>
+              </View>
+            </ScrollView>
           </View>
-        </View>
+        </KeyboardAvoidingView>
       </Modal>
 
       <ScreenShell
