@@ -17,6 +17,8 @@ import type {
   DashboardTrend,
   CreateAccountRequest,
   CreateUserRequest,
+  OpenAIOAuthAuthUrlResponse,
+  OpenAIOAuthTokenInfo,
   PaginatedData,
   UsageStats,
   UserUsageSummary,
@@ -330,6 +332,62 @@ export function getAccount(accountId: number) {
 
 export function getAccountAvailableModels(accountId: number) {
   return adminFetch<AdminAccountModel[]>(`/api/v1/admin/accounts/${accountId}/models`);
+}
+
+export function generateOpenAIAuthUrl(params: { proxy_id?: number | null; redirect_uri?: string } = {}) {
+  const body: Record<string, string | number> = {};
+
+  if (params.proxy_id) {
+    body.proxy_id = params.proxy_id;
+  }
+  if (params.redirect_uri) {
+    body.redirect_uri = params.redirect_uri;
+  }
+
+  return adminFetch<OpenAIOAuthAuthUrlResponse>('/api/v1/admin/openai/generate-auth-url', {
+    method: 'POST',
+    body: JSON.stringify(body),
+  });
+}
+
+export function exchangeOpenAIAuthCode(params: {
+  session_id: string;
+  code: string;
+  state: string;
+  proxy_id?: number | null;
+  redirect_uri?: string;
+}) {
+  const body: Record<string, string | number> = {
+    session_id: params.session_id,
+    code: params.code,
+    state: params.state,
+  };
+
+  if (params.proxy_id) {
+    body.proxy_id = params.proxy_id;
+  }
+  if (params.redirect_uri) {
+    body.redirect_uri = params.redirect_uri;
+  }
+
+  return adminFetch<OpenAIOAuthTokenInfo>('/api/v1/admin/openai/exchange-code', {
+    method: 'POST',
+    body: JSON.stringify(body),
+  });
+}
+
+export function applyOAuthCredentials(
+  accountId: number,
+  body: {
+    type: 'oauth' | 'setup-token';
+    credentials: Record<string, unknown>;
+    extra?: Record<string, unknown>;
+  }
+) {
+  return adminFetch<AdminAccount>(`/api/v1/admin/accounts/${accountId}/apply-oauth-credentials`, {
+    method: 'POST',
+    body: JSON.stringify(body),
+  });
 }
 
 export function createAccount(body: CreateAccountRequest) {

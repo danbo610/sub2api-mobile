@@ -236,6 +236,7 @@ export type AdminAccount = {
   created_at?: string;
   updated_at?: string;
   last_used_at?: string | null;
+  proxy_id?: number | null;
   group_ids?: number[];
   groups?: AdminGroup[];
   extra?: Record<string, string | number | boolean | null>;
@@ -255,6 +256,30 @@ export type CreateAccountRequest = {
   priority?: number;
   rate_multiplier?: number;
   group_ids?: number[];
+};
+
+export type OpenAIOAuthAuthUrlResponse = {
+  auth_url: string;
+  session_id: string;
+};
+
+export type OpenAIOAuthTokenInfo = {
+  access_token?: string;
+  refresh_token?: string;
+  client_id?: string;
+  id_token?: string;
+  token_type?: string;
+  expires_in?: number;
+  expires_at?: number;
+  scope?: string;
+  email?: string;
+  name?: string;
+  plan_type?: string;
+  privacy_mode?: string;
+  chatgpt_account_id?: string;
+  chatgpt_user_id?: string;
+  organization_id?: string;
+  [key: string]: unknown;
 };
 
 export type CreateUserRequest = {

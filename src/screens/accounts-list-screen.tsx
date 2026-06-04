@@ -1,13 +1,21 @@
 import { useMutation, useQueries, useQuery, useQueryClient } from '@tanstack/react-query';
+import * as Clipboard from 'expo-clipboard';
 import { useLocalSearchParams } from 'expo-router';
-import { KeyRound, Search, ShieldCheck, ShieldOff } from 'lucide-react-native';
+import { ExternalLink, KeyRound, Search, ShieldCheck, ShieldOff } from 'lucide-react-native';
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { FlatList, Pressable, RefreshControl, Text, TextInput, View } from 'react-native';
+import { FlatList, Linking, Modal, Pressable, RefreshControl, Text, TextInput, View } from 'react-native';
 import type { Edge } from 'react-native-safe-area-context';
 
 import { ListCard } from '@/src/components/list-card';
 import { ScreenShell } from '@/src/components/screen-shell';
 import { useDebouncedValue } from '@/src/hooks/use-debounced-value';
+import {
+  buildOpenAIOAuthCredentials,
+  buildOpenAIOAuthExtra,
+  extractOAuthCode,
+  extractOAuthState,
+  parseOAuthState,
+} from '@/src/lib/account-oauth';
 import {
   getAccountError,
   getAccountErrorMessage,
@@ -22,8 +30,17 @@ import {
   isUsageWindowLimited,
 } from '@/src/lib/account-usage';
 import { formatDisplayTime, formatTokenValue } from '@/src/lib/formatters';
-import { getAccountTodayStats, listAccounts, setAccountSchedulable, testAccount } from '@/src/services/admin';
+import {
+  applyOAuthCredentials,
+  exchangeOpenAIAuthCode,
+  generateOpenAIAuthUrl,
+  getAccountTodayStats,
+  listAccounts,
+  setAccountSchedulable,
+  testAccount,
+} from '@/src/services/admin';
 import type { AccountTestResult } from '@/src/lib/account-test';
+import type { AdminAccount } from '@/src/types/admin';
 
 type UsageSort = 'usage-desc' | 'usage-asc';
 type GroupFilterKey = 'all' | `group:${number}` | 'ungrouped';
@@ -34,9 +51,15 @@ type AccountTodaySummary = {
   cost: number;
 };
 
+type ReauthStep = 'idle' | 'generating' | 'ready' | 'submitting' | 'success';
+
 type AccountsListScreenProps = {
   safeAreaEdges?: Edge[];
 };
+
+function isOpenAIOAuthAccount(account: Pick<AdminAccount, 'platform' | 'type'>) {
+  return account.platform === 'openai' && account.type === 'oauth';
+}
 
 function AccountTestResultPanel({ result }: { result: AccountTestResult }) {
   return (
@@ -63,6 +86,14 @@ export function AccountsListScreen({ safeAreaEdges }: AccountsListScreenProps) {
   const [testingAccountId, setTestingAccountId] = useState<number | null>(null);
   const [testFeedbackByAccountId, setTestFeedbackByAccountId] = useState<Record<number, AccountTestResult>>({});
   const [togglingAccountId, setTogglingAccountId] = useState<number | null>(null);
+  const [reauthAccount, setReauthAccount] = useState<AdminAccount | null>(null);
+  const [reauthAuthUrl, setReauthAuthUrl] = useState('');
+  const [reauthSessionId, setReauthSessionId] = useState('');
+  const [reauthState, setReauthState] = useState('');
+  const [reauthCode, setReauthCode] = useState('');
+  const [reauthStep, setReauthStep] = useState<ReauthStep>('idle');
+  const [reauthError, setReauthError] = useState('');
+  const [reauthFeedback, setReauthFeedback] = useState('');
   const keyword = useDebouncedValue(searchText.trim(), 300);
   const queryClient = useQueryClient();
 
@@ -188,6 +219,122 @@ export function AccountsListScreen({ safeAreaEdges }: AccountsListScreenProps) {
     return sorted;
   }, [groupFilter, statusMatchedItems, todayByAccountId, usageSort]);
   const errorMessage = accountsQuery.error instanceof Error ? accountsQuery.error.message : '';
+  const isReauthBusy = reauthStep === 'generating' || reauthStep === 'submitting';
+
+  const closeReauthModal = useCallback(() => {
+    if (reauthStep === 'submitting') {
+      return;
+    }
+
+    setReauthAccount(null);
+    setReauthAuthUrl('');
+    setReauthSessionId('');
+    setReauthState('');
+    setReauthCode('');
+    setReauthStep('idle');
+    setReauthError('');
+    setReauthFeedback('');
+  }, [reauthStep]);
+
+  const openReauthModal = useCallback(async (account: AdminAccount) => {
+    setReauthAccount(account);
+    setReauthAuthUrl('');
+    setReauthSessionId('');
+    setReauthState('');
+    setReauthCode('');
+    setReauthError('');
+    setReauthFeedback('');
+    setReauthStep('generating');
+
+    try {
+      const result = await generateOpenAIAuthUrl({ proxy_id: account.proxy_id });
+      const state = parseOAuthState(result.auth_url);
+      setReauthAuthUrl(result.auth_url);
+      setReauthSessionId(result.session_id);
+      setReauthState(state);
+      setReauthStep('ready');
+
+      if (!state) {
+        setReauthError('授权链接中没有解析到 state。提交时请粘贴完整回调链接，或重新生成授权链接。');
+      }
+    } catch (error) {
+      setReauthStep('ready');
+      setReauthError(error instanceof Error && error.message ? error.message : '生成授权链接失败');
+    }
+  }, []);
+
+  const openAuthUrl = useCallback(async () => {
+    if (!reauthAuthUrl) {
+      return;
+    }
+
+    try {
+      await Linking.openURL(reauthAuthUrl);
+    } catch (error) {
+      setReauthError(error instanceof Error && error.message ? error.message : '打开授权链接失败');
+    }
+  }, [reauthAuthUrl]);
+
+  const copyAuthUrl = useCallback(async () => {
+    if (!reauthAuthUrl) {
+      return;
+    }
+
+    try {
+      await Clipboard.setStringAsync(reauthAuthUrl);
+      setReauthFeedback('授权链接已复制');
+    } catch (error) {
+      setReauthError(error instanceof Error && error.message ? error.message : '复制授权链接失败');
+    }
+  }, [reauthAuthUrl]);
+
+  const submitReauthCode = useCallback(async () => {
+    if (!reauthAccount) {
+      return;
+    }
+
+    const code = extractOAuthCode(reauthCode);
+    const state = extractOAuthState(reauthCode) || reauthState;
+
+    if (!reauthSessionId) {
+      setReauthError('缺少 session_id，请重新生成授权链接。');
+      return;
+    }
+    if (!code) {
+      setReauthError('请粘贴授权后的 code 或完整回调链接。');
+      return;
+    }
+    if (!state.trim()) {
+      setReauthError('缺少 state，请粘贴完整回调链接或重新生成授权链接。');
+      return;
+    }
+
+    setReauthStep('submitting');
+    setReauthError('');
+    setReauthFeedback('');
+
+    try {
+      const tokenInfo = await exchangeOpenAIAuthCode({
+        session_id: reauthSessionId,
+        code,
+        state: state.trim(),
+        proxy_id: reauthAccount.proxy_id,
+      });
+
+      await applyOAuthCredentials(reauthAccount.id, {
+        type: 'oauth',
+        credentials: buildOpenAIOAuthCredentials(tokenInfo),
+        extra: buildOpenAIOAuthExtra(tokenInfo),
+      });
+
+      await queryClient.invalidateQueries({ queryKey: ['accounts'] });
+      setReauthStep('success');
+      setReauthFeedback('重新授权成功，账号列表已刷新。');
+    } catch (error) {
+      setReauthStep('ready');
+      setReauthError(error instanceof Error && error.message ? error.message : '重新授权失败');
+    }
+  }, [queryClient, reauthAccount, reauthCode, reauthSessionId, reauthState]);
 
   const summary = useMemo(() => {
     const total = items.length;
@@ -296,6 +443,8 @@ export function AccountsListScreen({ safeAreaEdges }: AccountsListScreenProps) {
       const testFeedback = testFeedbackByAccountId[account.id];
       const isTogglingCurrent = togglingAccountId === account.id && toggleMutation.isPending;
       const isTestingCurrent = testingAccountId === account.id && testMutation.isPending;
+      const canReauth = isOpenAIOAuthAccount(account);
+      const isReauthCurrent = reauthAccount?.id === account.id && isReauthBusy;
 
       return (
         <View>
@@ -374,7 +523,7 @@ export function AccountsListScreen({ safeAreaEdges }: AccountsListScreenProps) {
               </View>
               {accountErrorMessage ? <Text className="text-xs text-[#a4512b]">异常信息：{accountErrorMessage}</Text> : null}
 
-              <View className="flex-row gap-2">
+              <View className="flex-row flex-wrap gap-2">
                 <Pressable
                   className="rounded-full bg-[#1b1d1f] px-4 py-2"
                   disabled={isTestingCurrent}
@@ -418,6 +567,20 @@ export function AccountsListScreen({ safeAreaEdges }: AccountsListScreenProps) {
                 >
                   <Text className="text-xs font-semibold uppercase tracking-[1.2px] text-[#4e463e]">{isTogglingCurrent ? '处理中...' : toggleLabel}</Text>
                 </Pressable>
+                {canReauth ? (
+                  <Pressable
+                    className="rounded-full bg-[#dbeafe] px-4 py-2"
+                    disabled={isReauthCurrent}
+                    onPress={(event) => {
+                      event.stopPropagation();
+                      void openReauthModal(account);
+                    }}
+                  >
+                    <Text className="text-xs font-semibold uppercase tracking-[1.2px] text-[#1d4ed8]">
+                      {isReauthCurrent ? '生成中...' : '重新授权'}
+                    </Text>
+                  </Pressable>
+                ) : null}
               </View>
 
               {testFeedback ? <AccountTestResultPanel result={testFeedback} /> : null}
@@ -426,7 +589,17 @@ export function AccountsListScreen({ safeAreaEdges }: AccountsListScreenProps) {
         </View>
       );
     },
-    [testFeedbackByAccountId, testMutation, testingAccountId, todayByAccountId, toggleMutation, togglingAccountId]
+    [
+      isReauthBusy,
+      openReauthModal,
+      reauthAccount?.id,
+      testFeedbackByAccountId,
+      testMutation,
+      testingAccountId,
+      todayByAccountId,
+      toggleMutation,
+      togglingAccountId,
+    ]
   );
 
   const emptyState = useMemo(
@@ -435,34 +608,140 @@ export function AccountsListScreen({ safeAreaEdges }: AccountsListScreenProps) {
   );
 
   return (
-    <ScreenShell
-      title="账号清单"
-      subtitle="查看名称、平台&类型、请求次数、消费金额、token消耗，并支持筛选与排序。"
-      titleAside={(
-        <Text className="text-[11px] text-[#7d7468]">更接近网页后台的账号视图。</Text>
-      )}
-      variant="minimal"
-      scroll={false}
-      safeAreaEdges={safeAreaEdges}
-      bottomInsetClassName="pb-6"
-      contentGapClassName="mt-2 gap-2"
-    >
-      <FlatList
-        style={{ flex: 1 }}
-        contentContainerStyle={{ paddingBottom: 12, flexGrow: 1 }}
-        data={filteredItems}
-        renderItem={renderItem}
-        keyExtractor={(item) => `${item.id}`}
-        showsVerticalScrollIndicator={false}
-        refreshControl={<RefreshControl refreshing={accountsQuery.isRefetching} onRefresh={() => void accountsQuery.refetch()} tintColor="#1d5f55" />}
-        ListHeaderComponent={listHeader}
-        ListEmptyComponent={emptyState}
-        ItemSeparatorComponent={() => <View className="h-4" />}
-        keyboardShouldPersistTaps="handled"
-        initialNumToRender={8}
-        maxToRenderPerBatch={8}
-        windowSize={5}
-      />
-    </ScreenShell>
+    <>
+      <Modal
+        animationType="slide"
+        transparent
+        visible={Boolean(reauthAccount)}
+        onRequestClose={closeReauthModal}
+      >
+        <View className="flex-1 justify-end" style={{ backgroundColor: 'rgba(0, 0, 0, 0.42)' }}>
+          <View className="rounded-t-[28px] bg-[#fbf8f2] px-5 pb-8 pt-5">
+            <View className="flex-row items-start justify-between gap-4">
+              <View className="flex-1">
+                <Text className="text-lg font-bold text-[#16181a]">重新授权 OpenAI</Text>
+                <Text className="mt-1 text-xs text-[#7d7468]" numberOfLines={1}>
+                  {reauthAccount?.name ?? '--'}
+                </Text>
+              </View>
+              <Pressable
+                className="rounded-full bg-[#e7dfcf] px-4 py-2"
+                disabled={reauthStep === 'submitting'}
+                onPress={closeReauthModal}
+              >
+                <Text className="text-xs font-semibold text-[#4e463e]">关闭</Text>
+              </Pressable>
+            </View>
+
+            <View className="mt-5 gap-4">
+              <View className="rounded-[18px] bg-[#f1ece2] px-4 py-4">
+                <Text className="text-[11px] font-semibold text-[#7d7468]">OAuth URL</Text>
+                <Text className="mt-2 text-sm leading-5 text-[#16181a]" numberOfLines={3}>
+                  {reauthStep === 'generating' ? '正在生成授权链接...' : reauthAuthUrl || '授权链接生成失败，请重试。'}
+                </Text>
+                <Text className="mt-2 text-[11px] text-[#7d7468]">
+                  {reauthSessionId ? `Session ${reauthSessionId.slice(0, 10)}...` : '生成后会自动保存 session。'}
+                </Text>
+              </View>
+
+              <View className="flex-row gap-2">
+                <Pressable
+                  className={reauthAuthUrl && !isReauthBusy ? 'flex-1 rounded-full bg-[#1d5f55] px-4 py-3' : 'flex-1 rounded-full bg-[#c9c2b4] px-4 py-3'}
+                  disabled={!reauthAuthUrl || isReauthBusy}
+                  onPress={() => void openAuthUrl()}
+                >
+                  <View className="flex-row items-center justify-center gap-2">
+                    <ExternalLink color="#f6f1e8" size={14} />
+                    <Text className="text-center text-xs font-semibold text-[#f6f1e8]">打开授权链接</Text>
+                  </View>
+                </Pressable>
+                <Pressable
+                  className={reauthAuthUrl && !isReauthBusy ? 'flex-1 rounded-full bg-[#e7dfcf] px-4 py-3' : 'flex-1 rounded-full bg-[#d8d0c1] px-4 py-3'}
+                  disabled={!reauthAuthUrl || isReauthBusy}
+                  onPress={() => void copyAuthUrl()}
+                >
+                  <Text className="text-center text-xs font-semibold text-[#4e463e]">复制链接</Text>
+                </Pressable>
+              </View>
+
+              <View>
+                <Text className="mb-2 text-[11px] font-semibold text-[#7d7468]">授权后的 code 或完整回调链接</Text>
+                <TextInput
+                  value={reauthCode}
+                  onChangeText={setReauthCode}
+                  placeholder="粘贴 code 或包含 code/state 的完整链接"
+                  placeholderTextColor="#9b9081"
+                  autoCapitalize="none"
+                  autoCorrect={false}
+                  multiline
+                  editable={reauthStep !== 'submitting' && reauthStep !== 'success'}
+                  className="min-h-24 rounded-[18px] bg-white px-4 py-3 text-sm leading-5 text-[#16181a]"
+                  textAlignVertical="top"
+                />
+                <Text className="mt-2 text-[11px] text-[#7d7468]">
+                  {reauthState ? '已从授权链接解析 state。' : '如果没有解析到 state，请粘贴完整回调链接。'}
+                </Text>
+              </View>
+
+              {reauthError ? <Text className="rounded-[14px] bg-[#fff0e8] px-3 py-2 text-xs text-[#a4512b]">{reauthError}</Text> : null}
+              {reauthFeedback ? <Text className="rounded-[14px] bg-[#e7f7ee] px-3 py-2 text-xs text-[#1d6b43]">{reauthFeedback}</Text> : null}
+
+              <View className="flex-row gap-2">
+                <Pressable
+                  className={reauthStep === 'submitting' || reauthStep === 'success' || !reauthAccount ? 'flex-1 rounded-full bg-[#c9c2b4] px-4 py-3' : 'flex-1 rounded-full bg-[#1b1d1f] px-4 py-3'}
+                  disabled={reauthStep === 'submitting' || reauthStep === 'success' || !reauthAccount}
+                  onPress={() => void submitReauthCode()}
+                >
+                  <Text className="text-center text-sm font-semibold text-[#f6f1e8]">
+                    {reauthStep === 'submitting' ? '正在提交...' : reauthStep === 'success' ? '已完成' : '完成授权'}
+                  </Text>
+                </Pressable>
+                <Pressable
+                  className={isReauthBusy || !reauthAccount ? 'rounded-full bg-[#d8d0c1] px-4 py-3' : 'rounded-full bg-[#e7dfcf] px-4 py-3'}
+                  disabled={isReauthBusy || !reauthAccount}
+                  onPress={() => {
+                    if (reauthAccount) {
+                      void openReauthModal(reauthAccount);
+                    }
+                  }}
+                >
+                  <Text className="text-sm font-semibold text-[#4e463e]">重新生成</Text>
+                </Pressable>
+              </View>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
+      <ScreenShell
+        title="账号清单"
+        subtitle="查看名称、平台&类型、请求次数、消费金额、token消耗，并支持筛选与排序。"
+        titleAside={(
+          <Text className="text-[11px] text-[#7d7468]">更接近网页后台的账号视图。</Text>
+        )}
+        variant="minimal"
+        scroll={false}
+        safeAreaEdges={safeAreaEdges}
+        bottomInsetClassName="pb-6"
+        contentGapClassName="mt-2 gap-2"
+      >
+        <FlatList
+          style={{ flex: 1 }}
+          contentContainerStyle={{ paddingBottom: 12, flexGrow: 1 }}
+          data={filteredItems}
+          renderItem={renderItem}
+          keyExtractor={(item) => `${item.id}`}
+          showsVerticalScrollIndicator={false}
+          refreshControl={<RefreshControl refreshing={accountsQuery.isRefetching} onRefresh={() => void accountsQuery.refetch()} tintColor="#1d5f55" />}
+          ListHeaderComponent={listHeader}
+          ListEmptyComponent={emptyState}
+          ItemSeparatorComponent={() => <View className="h-4" />}
+          keyboardShouldPersistTaps="handled"
+          initialNumToRender={8}
+          maxToRenderPerBatch={8}
+          windowSize={5}
+        />
+      </ScreenShell>
+    </>
   );
 }
