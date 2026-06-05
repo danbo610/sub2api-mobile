@@ -2,10 +2,15 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import * as Clipboard from 'expo-clipboard';
 import { Stack, router, useLocalSearchParams } from 'expo-router';
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Alert, Pressable, ScrollView, Text, TextInput, View } from 'react-native';
+import { Alert, Animated, Easing, Modal, Pressable, ScrollView, Text, TextInput, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
+import { AccountInfoCard } from '@/src/components/account-info-card';
 import { LineTrendChart } from '@/src/components/line-trend-chart';
+import {
+  getAccountUsageWindowsFromUsageInfo,
+  type AccountUsageWindow,
+} from '@/src/lib/account-usage';
 import {
   API_KEY_USAGE_BATCH_SIZE,
   buildApiKeyGroupFilterOptions,
@@ -17,11 +22,14 @@ import {
   type ApiKeyGroupFilterKey,
 } from '@/src/lib/api-key-usage';
 import {
+  getAccountTodayStats,
+  getAccountUsage,
   getApiKeyUsageSummary,
   getDashboardSnapshot,
   getLatestApiKeyUsageLog,
   getUsageStats,
   getUser,
+  listAllAccounts,
   listUserApiKeys,
   updateUserBalance,
   updateUserStatus,
@@ -507,15 +515,56 @@ export default function UserDetailScreen() {
   const [statusError, setStatusError] = useState<string | null>(null);
   const [searchText, setSearchText] = useState('');
   const [groupFilter, setGroupFilter] = useState<ApiKeyGroupFilterKey>('all');
+  const [groupAccountsModalVisible, setGroupAccountsModalVisible] = useState(false);
   const [copiedKeyId, setCopiedKeyId] = useState<number | null>(null);
   const [keyUsageById, setKeyUsageById] = useState<Record<number, ApiKeyUsageSummary>>({});
   const [loadingKeyUsageIds, setLoadingKeyUsageIds] = useState<Record<number, boolean>>({});
   const [expandedKeyDetailId, setExpandedKeyDetailId] = useState<number | null>(null);
+  const [queryingUsageAccountId, setQueryingUsageAccountId] = useState<number | null>(null);
+  const [usageWindowsByAccountId, setUsageWindowsByAccountId] = useState<Record<number, AccountUsageWindow[]>>({});
+  const [usageQueryErrorByAccountId, setUsageQueryErrorByAccountId] = useState<Record<number, string>>({});
   const loadedKeyUsageSignatureRef = useRef('');
+  const usageQuerySpin = useRef(new Animated.Value(0)).current;
   const [rangeKey, setRangeKey] = useState<RangeKey>('7d');
   const range = getDateRange(rangeKey);
   const todayRange = useMemo(() => getTodayRange(), []);
   const monthRange = useMemo(() => getDateRange('30d'), []);
+
+  useEffect(() => {
+    if (queryingUsageAccountId === null) {
+      usageQuerySpin.stopAnimation();
+      usageQuerySpin.setValue(0);
+      return;
+    }
+
+    const animation = Animated.loop(
+      Animated.timing(usageQuerySpin, {
+        toValue: 1,
+        duration: 900,
+        easing: Easing.linear,
+        useNativeDriver: true,
+      })
+    );
+    animation.start();
+
+    return () => {
+      animation.stop();
+    };
+  }, [queryingUsageAccountId, usageQuerySpin]);
+
+  const usageQuerySpinStyle = useMemo(
+    () => ({
+      transform: [
+        {
+          rotate: usageQuerySpin.interpolate({
+            inputRange: [0, 1],
+            outputRange: ['0deg', '360deg'],
+          }),
+        },
+      ],
+    }),
+    [usageQuerySpin]
+  );
 
   const userQuery = useQuery({
     queryKey: ['user', userId],
@@ -527,6 +576,13 @@ export default function UserDetailScreen() {
     queryKey: ['user-api-keys', userId],
     queryFn: () => listUserApiKeys(userId),
     enabled: Number.isFinite(userId),
+  });
+
+  const allAccountsQuery = useQuery({
+    queryKey: ['accounts', 'all'],
+    queryFn: () => listAllAccounts(),
+    enabled: groupAccountsModalVisible,
+    staleTime: 60_000,
   });
 
   const usageStatsQuery = useQuery({
@@ -546,11 +602,9 @@ export default function UserDetailScreen() {
         include_model_stats: false,
         include_group_stats: false,
         include_users_trend: false,
-      }),
+    }),
     enabled: Number.isFinite(userId),
   });
-;
-;
 
   const balanceMutation = useMutation({
     mutationFn: (payload: { amount: number; notes?: string; operation: BalanceOperation }) =>
@@ -598,12 +652,79 @@ export default function UserDetailScreen() {
   );
   const selectedGroupOption = groupOptions.find((option) => option.key === groupFilter) ?? groupOptions[0];
   const filteredApiKeyIds = useMemo(() => filteredApiKeys.map((item) => item.id), [filteredApiKeys]);
+  const selectedGroupAccounts = useMemo(() => {
+    const accounts = allAccountsQuery.data ?? [];
+
+    if (groupFilter === 'all') {
+      return [];
+    }
+
+    if (groupFilter === 'ungrouped') {
+      return accounts.filter((account) => (account.groups ?? []).length === 0);
+    }
+
+    const groupId = Number(groupFilter.replace('group:', ''));
+    return accounts.filter((account) => (account.groups ?? []).some((group) => group.id === groupId));
+  }, [allAccountsQuery.data, groupFilter]);
+  const canOpenGroupAccounts = Boolean(selectedGroupOption && groupFilter !== 'all');
+  const groupAccountStatsQueries = useQuery({
+    queryKey: ['account-today-stats', 'group-modal', selectedGroupAccounts.map((account) => account.id).join(',')],
+    queryFn: async () => {
+      const results = await Promise.all(
+        selectedGroupAccounts.map(async (account) => {
+          try {
+            const stats = await getAccountTodayStats(account.id);
+            return [account.id, {
+              requests: typeof stats.requests === 'number' && Number.isFinite(stats.requests) ? stats.requests : 0,
+              tokens: typeof stats.tokens === 'number' && Number.isFinite(stats.tokens) ? stats.tokens : 0,
+              cost: typeof stats.cost === 'number' && Number.isFinite(stats.cost) ? stats.cost : 0,
+            }] as const;
+          } catch {
+            const fromExtra = typeof account.extra?.today_cost === 'number' ? account.extra.today_cost : 0;
+            return [account.id, { requests: 0, tokens: 0, cost: fromExtra }] as const;
+          }
+        })
+      );
+
+      return Object.fromEntries(results);
+    },
+    enabled: groupAccountsModalVisible && selectedGroupAccounts.length > 0,
+    staleTime: 60_000,
+  });
 
   useEffect(() => {
     if (!groupOptions.some((option) => option.key === groupFilter)) {
       setGroupFilter('all');
     }
   }, [groupFilter, groupOptions]);
+
+  const usageQueryMutation = useMutation({
+    mutationFn: (accountId: number) => getAccountUsage(accountId, 'active', true),
+  });
+
+  function handleQueryUsage(accountId: number) {
+    setQueryingUsageAccountId(accountId);
+    setUsageQueryErrorByAccountId((current) => {
+      const next = { ...current };
+      delete next[accountId];
+      return next;
+    });
+
+    usageQueryMutation.mutate(accountId, {
+      onSuccess: (usage) => {
+        const windows = getAccountUsageWindowsFromUsageInfo(usage);
+        setUsageWindowsByAccountId((current) => ({ ...current, [accountId]: windows }));
+        void queryClient.invalidateQueries({ queryKey: ['accounts'] });
+      },
+      onError: (error) => {
+        const message = error instanceof Error && error.message ? error.message : '用量查询失败';
+        setUsageQueryErrorByAccountId((current) => ({ ...current, [accountId]: message }));
+      },
+      onSettled: () => {
+        setQueryingUsageAccountId((current) => (current === accountId ? null : current));
+      },
+    });
+  }
 
   const latestAccessQuery = useQuery({
     queryKey: ['api-key-latest-access', userId, expandedKeyDetailId],
@@ -934,7 +1055,9 @@ export default function UserDetailScreen() {
               })}
             </View>
             {selectedGroupOption ? (
-              <View
+              <Pressable
+                disabled={!canOpenGroupAccounts}
+                onPress={() => setGroupAccountsModalVisible(true)}
                 style={{
                   backgroundColor: colors.muted,
                   borderRadius: 12,
@@ -943,13 +1066,14 @@ export default function UserDetailScreen() {
                   borderWidth: 1,
                   borderColor: colors.border,
                   marginBottom: 10,
+                  opacity: canOpenGroupAccounts ? 1 : 0.72,
                 }}
               >
                 <Text style={{ fontSize: 12, color: colors.subtext }}>当前分组</Text>
                 <Text style={{ marginTop: 4, fontSize: 14, lineHeight: 20, fontWeight: '700', color: colors.text }}>
                   {selectedGroupOption.label}({selectedGroupOption.count})
                 </Text>
-              </View>
+              </Pressable>
             ) : null}
 
             {apiKeysQuery.isLoading ? <Text style={{ color: colors.subtext }}>正在加载 API Keys...</Text> : null}
@@ -1080,6 +1204,66 @@ export default function UserDetailScreen() {
           </Section>
         </ScrollView>
       </SafeAreaView>
+
+      <Modal
+        animationType="slide"
+        transparent
+        visible={groupAccountsModalVisible}
+        onRequestClose={() => setGroupAccountsModalVisible(false)}
+      >
+        <View style={{ flex: 1, justifyContent: 'flex-end', backgroundColor: 'rgba(0, 0, 0, 0.42)' }}>
+          <View style={{ maxHeight: '86%', backgroundColor: colors.card, borderTopLeftRadius: 26, borderTopRightRadius: 26 }}>
+            <ScrollView
+              showsVerticalScrollIndicator={false}
+              contentContainerStyle={{ paddingHorizontal: 16, paddingTop: 18, paddingBottom: 34 }}
+            >
+              <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', gap: 12 }}>
+                <View style={{ flex: 1 }}>
+                  <Text style={{ fontSize: 18, fontWeight: '800', color: colors.text }}>分组账号</Text>
+                  <Text style={{ marginTop: 4, fontSize: 12, lineHeight: 18, color: colors.subtext }}>
+                    {selectedGroupOption ? `${selectedGroupOption.label}(${selectedGroupOption.count})` : '--'}
+                  </Text>
+                </View>
+                <Pressable
+                  onPress={() => setGroupAccountsModalVisible(false)}
+                  style={{ borderRadius: 999, backgroundColor: colors.border, paddingHorizontal: 14, paddingVertical: 9 }}
+                >
+                  <Text style={{ fontSize: 12, fontWeight: '700', color: '#4e463e' }}>关闭</Text>
+                </Pressable>
+              </View>
+
+              <View style={{ marginTop: 14 }}>
+                {allAccountsQuery.isLoading ? <Text style={{ color: colors.subtext }}>正在加载账号...</Text> : null}
+                {allAccountsQuery.error ? (
+                  <View style={{ backgroundColor: colors.errorBg, borderRadius: 12, padding: 12 }}>
+                    <Text style={{ color: colors.errorText, fontWeight: '700' }}>账号加载失败</Text>
+                    <Text style={{ marginTop: 6, color: colors.errorText }}>{getErrorMessage(allAccountsQuery.error)}</Text>
+                  </View>
+                ) : null}
+                {!allAccountsQuery.isLoading && !allAccountsQuery.error ? (
+                  selectedGroupAccounts.length > 0 ? (
+                    selectedGroupAccounts.map((account) => (
+                      <AccountInfoCard
+                        key={account.id}
+                        account={account}
+                        todayStats={groupAccountStatsQueries.data?.[account.id]}
+                        usageWindows={usageWindowsByAccountId[account.id]}
+                        usageQueryError={usageQueryErrorByAccountId[account.id]}
+                        isQueryingUsage={queryingUsageAccountId === account.id && usageQueryMutation.isPending}
+                        usageQuerySpinStyle={usageQuerySpinStyle}
+                        onQueryUsage={handleQueryUsage}
+                        containerClassName="mb-3"
+                      />
+                    ))
+                  ) : (
+                    <Text style={{ color: colors.subtext }}>当前分组下没有账号。</Text>
+                  )
+                ) : null}
+              </View>
+            </ScrollView>
+          </View>
+        </View>
+      </Modal>
     </>
   );
 }

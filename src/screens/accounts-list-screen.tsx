@@ -1,9 +1,11 @@
 import { useMutation, useQueries, useQuery, useQueryClient } from '@tanstack/react-query';
 import * as Clipboard from 'expo-clipboard';
 import { useLocalSearchParams } from 'expo-router';
-import { ExternalLink, KeyRound, Search, ShieldCheck, ShieldOff } from 'lucide-react-native';
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { ExternalLink, KeyRound, Search } from 'lucide-react-native';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
+  Animated,
+  Easing,
   FlatList,
   KeyboardAvoidingView,
   Linking,
@@ -18,6 +20,7 @@ import {
 } from 'react-native';
 import type { Edge } from 'react-native-safe-area-context';
 
+import { AccountInfoCard } from '@/src/components/account-info-card';
 import { ListCard } from '@/src/components/list-card';
 import { ScreenShell } from '@/src/components/screen-shell';
 import { useDebouncedValue } from '@/src/hooks/use-debounced-value';
@@ -29,24 +32,20 @@ import {
   parseOAuthState,
 } from '@/src/lib/account-oauth';
 import {
-  getAccountError,
-  getAccountErrorMessage,
   getAccountVisualStatus,
   parseAccountStatusFilter,
   type AccountStatusFilter,
 } from '@/src/lib/account-status';
 import {
-  formatRelativeTime,
-  formatUsageWindowReset,
-  getAccountUsageWindows,
-  isUsageWindowLimited,
+  getAccountUsageWindowsFromUsageInfo,
+  type AccountUsageWindow,
 } from '@/src/lib/account-usage';
-import { formatDisplayTime, formatTokenValue } from '@/src/lib/formatters';
 import {
   applyOAuthCredentials,
   exchangeOpenAIAuthCode,
   generateOpenAIAuthUrl,
   getAccountTodayStats,
+  getAccountUsage,
   listAccounts,
   setAccountSchedulable,
   testAccount,
@@ -98,6 +97,9 @@ export function AccountsListScreen({ safeAreaEdges }: AccountsListScreenProps) {
   const [testingAccountId, setTestingAccountId] = useState<number | null>(null);
   const [testFeedbackByAccountId, setTestFeedbackByAccountId] = useState<Record<number, AccountTestResult>>({});
   const [togglingAccountId, setTogglingAccountId] = useState<number | null>(null);
+  const [queryingUsageAccountId, setQueryingUsageAccountId] = useState<number | null>(null);
+  const [usageWindowsByAccountId, setUsageWindowsByAccountId] = useState<Record<number, AccountUsageWindow[]>>({});
+  const [usageQueryErrorByAccountId, setUsageQueryErrorByAccountId] = useState<Record<number, string>>({});
   const [reauthAccount, setReauthAccount] = useState<AdminAccount | null>(null);
   const [reauthAuthUrl, setReauthAuthUrl] = useState('');
   const [reauthSessionId, setReauthSessionId] = useState('');
@@ -108,6 +110,43 @@ export function AccountsListScreen({ safeAreaEdges }: AccountsListScreenProps) {
   const [reauthFeedback, setReauthFeedback] = useState('');
   const keyword = useDebouncedValue(searchText.trim(), 300);
   const queryClient = useQueryClient();
+  const usageQuerySpin = useRef(new Animated.Value(0)).current;
+
+  useEffect(() => {
+    if (queryingUsageAccountId === null) {
+      usageQuerySpin.stopAnimation();
+      usageQuerySpin.setValue(0);
+      return;
+    }
+
+    const animation = Animated.loop(
+      Animated.timing(usageQuerySpin, {
+        toValue: 1,
+        duration: 900,
+        easing: Easing.linear,
+        useNativeDriver: true,
+      })
+    );
+    animation.start();
+
+    return () => {
+      animation.stop();
+    };
+  }, [queryingUsageAccountId, usageQuerySpin]);
+
+  const usageQuerySpinStyle = useMemo(
+    () => ({
+      transform: [
+        {
+          rotate: usageQuerySpin.interpolate({
+            inputRange: [0, 1],
+            outputRange: ['0deg', '360deg'],
+          }),
+        },
+      ],
+    }),
+    [usageQuerySpin]
+  );
 
   useEffect(() => {
     setFilter(parseAccountStatusFilter(routeFilter));
@@ -126,6 +165,10 @@ export function AccountsListScreen({ safeAreaEdges }: AccountsListScreenProps) {
 
   const testMutation = useMutation({
     mutationFn: (account: (typeof items)[number]) => testAccount(account),
+  });
+
+  const usageQueryMutation = useMutation({
+    mutationFn: (accountId: number) => getAccountUsage(accountId, 'active', true),
   });
 
   const items = accountsQuery.data?.items ?? [];
@@ -348,6 +391,30 @@ export function AccountsListScreen({ safeAreaEdges }: AccountsListScreenProps) {
     }
   }, [queryClient, reauthAccount, reauthCode, reauthSessionId, reauthState]);
 
+  const handleQueryUsage = useCallback((accountId: number) => {
+    setQueryingUsageAccountId(accountId);
+    setUsageQueryErrorByAccountId((current) => {
+      const next = { ...current };
+      delete next[accountId];
+      return next;
+    });
+
+    usageQueryMutation.mutate(accountId, {
+      onSuccess: (usage) => {
+        const windows = getAccountUsageWindowsFromUsageInfo(usage);
+        setUsageWindowsByAccountId((current) => ({ ...current, [accountId]: windows }));
+        void queryClient.invalidateQueries({ queryKey: ['accounts'] });
+      },
+      onError: (error) => {
+        const message = error instanceof Error && error.message ? error.message : '用量查询失败';
+        setUsageQueryErrorByAccountId((current) => ({ ...current, [accountId]: message }));
+      },
+      onSettled: () => {
+        setQueryingUsageAccountId((current) => (current === accountId ? null : current));
+      },
+    });
+  }, [queryClient, usageQueryMutation]);
+
   const summary = useMemo(() => {
     const total = items.length;
     const errors = items.filter((item) => getAccountVisualStatus(item).filterKey === 'error').length;
@@ -438,18 +505,10 @@ export function AccountsListScreen({ safeAreaEdges }: AccountsListScreenProps) {
 
   const renderItem = useCallback(
     ({ item: account }: { item: (typeof filteredItems)[number] }) => {
-      const isError = getAccountError(account);
       const visualStatus = getAccountVisualStatus(account);
-      const statusText = visualStatus.label;
-      const groupsText = account.groups?.map((group) => group.name).filter(Boolean).slice(0, 3).join(' · ') || '未分组';
-      const currentConcurrency = account.current_concurrency ?? 0;
-      const capacityText = `${currentConcurrency} / ${account.concurrency ?? 0}`;
-      const createdAtText = formatDisplayTime(account.created_at);
-      const isBusy = currentConcurrency > 0;
-      const accountErrorMessage = getAccountErrorMessage(account);
       const todayStats = todayByAccountId.get(account.id) ?? { requests: 0, tokens: 0, cost: 0 };
-      const usageWindows = getAccountUsageWindows(account);
-      const recentUsedText = formatRelativeTime(account.last_used_at);
+      const usageWindows = usageWindowsByAccountId[account.id];
+      const usageQueryError = usageQueryErrorByAccountId[account.id];
       const nextSchedulable = visualStatus.filterKey === 'paused';
       const toggleLabel = nextSchedulable ? '恢复' : '暂停';
       const testFeedback = testFeedbackByAccountId[account.id];
@@ -457,153 +516,87 @@ export function AccountsListScreen({ safeAreaEdges }: AccountsListScreenProps) {
       const isTestingCurrent = testingAccountId === account.id && testMutation.isPending;
       const canReauth = isOpenAIOAuthAccount(account);
       const isReauthCurrent = reauthAccount?.id === account.id && isReauthBusy;
+      const isQueryingUsageCurrent = queryingUsageAccountId === account.id && usageQueryMutation.isPending;
 
       return (
-        <View>
-          <ListCard
-            title={account.name}
-            meta={`${account.platform} · ${account.type}`}
-            badge={statusText}
-            badgeTone={visualStatus.badgeTone}
-            icon={KeyRound}
-          >
-            <View className="gap-3">
-              <View className="flex-row items-center justify-between">
-                <View className="flex-row items-center gap-2">
-                  {account.schedulable && !isError ? <ShieldCheck color="#7d7468" size={14} /> : <ShieldOff color="#7d7468" size={14} />}
-                  <Text className="text-sm text-[#7d7468]">状态：{statusText}</Text>
-                </View>
-              </View>
+        <AccountInfoCard
+          account={account}
+          todayStats={todayStats}
+          usageWindows={usageWindows}
+          usageQueryError={usageQueryError}
+          isQueryingUsage={isQueryingUsageCurrent}
+          usageQuerySpinStyle={usageQuerySpinStyle}
+          onQueryUsage={handleQueryUsage}
+        >
+          <View className="flex-row flex-wrap gap-2">
+            <Pressable
+              className="rounded-full bg-[#1b1d1f] px-4 py-2"
+              disabled={isTestingCurrent}
+              onPress={(event) => {
+                event.stopPropagation();
+                setTestingAccountId(account.id);
+                testMutation.mutate(account, {
+                  onSuccess: (result) => {
+                    setTestFeedbackByAccountId((current) => ({ ...current, [account.id]: result }));
+                  },
+                  onError: (error) => {
+                    const message = error instanceof Error && error.message ? error.message : '测试失败';
+                    setTestFeedbackByAccountId((current) => ({
+                      ...current,
+                      [account.id]: { ok: false, prompt: 'hi', error: message },
+                    }));
+                  },
+                  onSettled: () => {
+                    setTestingAccountId((current) => (current === account.id ? null : current));
+                  },
+                });
+              }}
+            >
+              <Text className="text-xs font-semibold uppercase tracking-[1.2px] text-[#f6f1e8]">{isTestingCurrent ? '测试中...' : '测试'}</Text>
+            </Pressable>
+            <Pressable
+              className="rounded-full bg-[#e7dfcf] px-4 py-2"
+              disabled={isTogglingCurrent}
+              onPress={(event) => {
+                event.stopPropagation();
+                setTogglingAccountId(account.id);
+                toggleMutation.mutate({
+                  accountId: account.id,
+                  schedulable: nextSchedulable,
+                }, {
+                  onSettled: () => {
+                    setTogglingAccountId((current) => (current === account.id ? null : current));
+                  },
+                });
+              }}
+            >
+              <Text className="text-xs font-semibold uppercase tracking-[1.2px] text-[#4e463e]">{isTogglingCurrent ? '处理中...' : toggleLabel}</Text>
+            </Pressable>
+            {canReauth ? (
+              <Pressable
+                className="rounded-full bg-[#dbeafe] px-4 py-2"
+                disabled={isReauthCurrent}
+                onPress={(event) => {
+                  event.stopPropagation();
+                  void openReauthModal(account);
+                }}
+              >
+                <Text className="text-xs font-semibold uppercase tracking-[1.2px] text-[#1d4ed8]">
+                  {isReauthCurrent ? '生成中...' : '重新授权'}
+                </Text>
+              </Pressable>
+            ) : null}
+          </View>
 
-              <View className="flex-row gap-2">
-                <View className="flex-1 rounded-[14px] bg-[#f1ece2] px-3 py-3">
-                  <Text className="text-[11px] text-[#7d7468]">请求次数</Text>
-                  <Text className="mt-1 text-sm font-bold text-[#16181a]">{todayStats.requests}</Text>
-                </View>
-                <View className="flex-1 rounded-[14px] bg-[#f1ece2] px-3 py-3">
-                  <Text className="text-[11px] text-[#7d7468]">消费金额</Text>
-                  <Text className="mt-1 text-sm font-bold text-[#16181a]">${todayStats.cost.toFixed(2)}</Text>
-                </View>
-                <View className="flex-1 rounded-[14px] bg-[#f1ece2] px-3 py-3">
-                  <Text className="text-[11px] text-[#7d7468]">token消耗</Text>
-                  <Text className="mt-1 text-sm font-bold text-[#16181a]">{formatTokenValue(todayStats.tokens)}</Text>
-                </View>
-              </View>
-
-              <View className="flex-row items-start gap-3 rounded-[14px] bg-[#f7f3eb] px-3 py-3">
-                <View className="flex-1">
-                  <Text className="text-[11px] font-semibold text-[#4e5664]">用量窗口</Text>
-                  {usageWindows.length > 0 ? (
-                    <View className="mt-2 gap-2">
-                      {usageWindows.map((window) => {
-                        const limited = isUsageWindowLimited(window);
-                        return (
-                          <View key={window.key} className="flex-row items-center gap-2">
-                            <Text className="min-w-8 rounded-md bg-[#e4ecff] px-2 py-1 text-center text-xs font-semibold text-[#3c45f0]">
-                              {window.label}
-                            </Text>
-                            <View className="h-1.5 flex-1 overflow-hidden rounded-full bg-[#e0e2e7]">
-                              <View
-                                className={limited ? 'h-full rounded-full bg-[#ef4444]' : 'h-full rounded-full bg-[#2fb96b]'}
-                                style={{ width: `${window.percent}%` }}
-                              />
-                            </View>
-                            <Text className={limited ? 'min-w-24 text-xs text-[#ef4444]' : 'min-w-24 text-xs text-[#6f7785]'}>
-                              {window.percent}% {formatUsageWindowReset(window)}
-                            </Text>
-                          </View>
-                        );
-                      })}
-                    </View>
-                  ) : (
-                    <Text className="mt-2 text-xs text-[#8f96a3]">暂无窗口数据</Text>
-                  )}
-                </View>
-                <View style={{ minWidth: 82 }}>
-                  <Text className="text-right text-[11px] font-semibold text-[#4e5664]">最近使用</Text>
-                  <Text className="mt-3 text-right text-lg font-semibold text-[#6f7785]">{recentUsedText}</Text>
-                </View>
-              </View>
-
-              <Text className="text-xs text-[#7d7468]">优先级 {account.priority ?? 0} · 倍率 {(account.rate_multiplier ?? 1).toFixed(2)}x</Text>
-              <Text className="text-xs text-[#7d7468]" numberOfLines={1}>分组 {groupsText}</Text>
-              <View className="flex-row flex-wrap items-center gap-1.5">
-                <View className={isBusy ? 'rounded-lg bg-[#fff0b8] px-2 py-1' : 'rounded-lg bg-[#f1ece2] px-2 py-1'}>
-                  <Text className={isBusy ? 'text-xs font-semibold text-[#a66a00]' : 'text-xs text-[#7d7468]'}>容量 {capacityText}</Text>
-                </View>
-                <Text className="text-xs text-[#7d7468]" numberOfLines={1}>· 创建时间 {createdAtText}</Text>
-              </View>
-              {accountErrorMessage ? <Text className="text-xs text-[#a4512b]">异常信息：{accountErrorMessage}</Text> : null}
-
-              <View className="flex-row flex-wrap gap-2">
-                <Pressable
-                  className="rounded-full bg-[#1b1d1f] px-4 py-2"
-                  disabled={isTestingCurrent}
-                  onPress={(event) => {
-                    event.stopPropagation();
-                    setTestingAccountId(account.id);
-                    testMutation.mutate(account, {
-                      onSuccess: (result) => {
-                        setTestFeedbackByAccountId((current) => ({ ...current, [account.id]: result }));
-                      },
-                      onError: (error) => {
-                        const message = error instanceof Error && error.message ? error.message : '测试失败';
-                        setTestFeedbackByAccountId((current) => ({
-                          ...current,
-                          [account.id]: { ok: false, prompt: 'hi', error: message },
-                        }));
-                      },
-                      onSettled: () => {
-                        setTestingAccountId((current) => (current === account.id ? null : current));
-                      },
-                    });
-                  }}
-                >
-                  <Text className="text-xs font-semibold uppercase tracking-[1.2px] text-[#f6f1e8]">{isTestingCurrent ? '测试中...' : '测试'}</Text>
-                </Pressable>
-                <Pressable
-                  className="rounded-full bg-[#e7dfcf] px-4 py-2"
-                  disabled={isTogglingCurrent}
-                  onPress={(event) => {
-                    event.stopPropagation();
-                    setTogglingAccountId(account.id);
-                    toggleMutation.mutate({
-                      accountId: account.id,
-                      schedulable: nextSchedulable,
-                    }, {
-                      onSettled: () => {
-                        setTogglingAccountId((current) => (current === account.id ? null : current));
-                      },
-                    });
-                  }}
-                >
-                  <Text className="text-xs font-semibold uppercase tracking-[1.2px] text-[#4e463e]">{isTogglingCurrent ? '处理中...' : toggleLabel}</Text>
-                </Pressable>
-                {canReauth ? (
-                  <Pressable
-                    className="rounded-full bg-[#dbeafe] px-4 py-2"
-                    disabled={isReauthCurrent}
-                    onPress={(event) => {
-                      event.stopPropagation();
-                      void openReauthModal(account);
-                    }}
-                  >
-                    <Text className="text-xs font-semibold uppercase tracking-[1.2px] text-[#1d4ed8]">
-                      {isReauthCurrent ? '生成中...' : '重新授权'}
-                    </Text>
-                  </Pressable>
-                ) : null}
-              </View>
-
-              {testFeedback ? <AccountTestResultPanel result={testFeedback} /> : null}
-            </View>
-          </ListCard>
-        </View>
+          {testFeedback ? <AccountTestResultPanel result={testFeedback} /> : null}
+        </AccountInfoCard>
       );
     },
     [
       isReauthBusy,
+      handleQueryUsage,
       openReauthModal,
+      queryingUsageAccountId,
       reauthAccount?.id,
       testFeedbackByAccountId,
       testMutation,
@@ -611,6 +604,10 @@ export function AccountsListScreen({ safeAreaEdges }: AccountsListScreenProps) {
       todayByAccountId,
       toggleMutation,
       togglingAccountId,
+      usageQueryErrorByAccountId,
+      usageQueryMutation.isPending,
+      usageQuerySpinStyle,
+      usageWindowsByAccountId,
     ]
   );
 

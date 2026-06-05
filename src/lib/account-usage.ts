@@ -11,6 +11,24 @@ export type AccountUsageWindow = {
   windowMinutes?: number;
 };
 
+export type AccountUsageProgress = {
+  utilization?: number | null;
+  remaining_seconds?: number | null;
+  resets_at?: string | null;
+};
+
+export type AccountUsageInfo = {
+  source?: 'passive' | 'active';
+  updated_at?: string | null;
+  five_hour?: AccountUsageProgress | null;
+  seven_day?: AccountUsageProgress | null;
+  error?: string | null;
+};
+
+export type AccountUsageWindowTone = 'ok' | 'warning' | 'limited';
+
+export const ACCOUNT_USAGE_WARNING_PERCENT = 80;
+
 type AccountExtra = NonNullable<AdminAccount['extra']>;
 
 const WINDOW_CONFIG: Array<{
@@ -70,8 +88,47 @@ export function getAccountUsageWindows(account: Pick<AdminAccount, 'extra'>): Ac
   });
 }
 
+function usageProgressToWindow(key: AccountUsageWindowKey, label: string, progress?: AccountUsageProgress | null): AccountUsageWindow | null {
+  const percent = clampUsagePercent(progress?.utilization);
+
+  if (percent === undefined) {
+    return null;
+  }
+
+  return {
+    key,
+    label,
+    percent,
+    resetAfterSeconds: getFiniteNumber(progress?.remaining_seconds),
+    resetAt: getString(progress?.resets_at),
+  };
+}
+
+export function getAccountUsageWindowsFromUsageInfo(usage?: AccountUsageInfo | null): AccountUsageWindow[] {
+  if (!usage) {
+    return [];
+  }
+
+  return [
+    usageProgressToWindow('5h', '5h', usage.five_hour),
+    usageProgressToWindow('7d', '7d', usage.seven_day),
+  ].filter((window): window is AccountUsageWindow => Boolean(window));
+}
+
 export function isUsageWindowLimited(window: Pick<AccountUsageWindow, 'percent'>) {
   return window.percent >= 100;
+}
+
+export function getUsageWindowTone(window: Pick<AccountUsageWindow, 'percent'>): AccountUsageWindowTone {
+  if (isUsageWindowLimited(window)) {
+    return 'limited';
+  }
+
+  if (window.percent >= ACCOUNT_USAGE_WARNING_PERCENT) {
+    return 'warning';
+  }
+
+  return 'ok';
 }
 
 export function isAccountUsageLimited(account: Pick<AdminAccount, 'extra'>) {

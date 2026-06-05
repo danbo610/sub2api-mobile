@@ -1,5 +1,6 @@
 import { buildAdminRequestUrl, adminFetch } from '@/src/lib/admin-fetch';
 import { parseAccountTestResponse } from '@/src/lib/account-test';
+import type { AccountUsageInfo } from '@/src/lib/account-usage';
 import { adminConfigState } from '@/src/store/admin-config';
 import type {
   AccountTodayStats,
@@ -320,10 +321,31 @@ export function getGroup(groupId: number) {
   return adminFetch<AdminGroup>(`/api/v1/admin/groups/${groupId}`);
 }
 
-export function listAccounts(search = '') {
+export function listAccountsPage(params: { page?: number; page_size?: number; search?: string } = {}) {
   return adminFetch<PaginatedData<AdminAccount>>(
-    `/api/v1/admin/accounts${buildQuery({ page: 1, page_size: 20, search: search.trim() })}`
+    `/api/v1/admin/accounts${buildQuery({
+      page: params.page ?? 1,
+      page_size: params.page_size ?? 20,
+      search: params.search?.trim(),
+    })}`
   );
+}
+
+export function listAccounts(search = '') {
+  return listAccountsPage({ page: 1, page_size: 20, search });
+}
+
+export async function listAllAccounts(search = '') {
+  const firstPage = await listAccountsPage({ page: 1, page_size: 1000, search });
+  const items = [...(firstPage.items ?? [])];
+  const pages = Math.max(Number(firstPage.pages ?? 1), 1);
+
+  for (let page = 2; page <= pages; page += 1) {
+    const nextPage = await listAccountsPage({ page, page_size: 1000, search });
+    items.push(...(nextPage.items ?? []));
+  }
+
+  return items;
 }
 
 export function getAccount(accountId: number) {
@@ -399,6 +421,15 @@ export function createAccount(body: CreateAccountRequest) {
 
 export function getAccountTodayStats(accountId: number) {
   return adminFetch<AccountTodayStats>(`/api/v1/admin/accounts/${accountId}/today-stats`);
+}
+
+export function getAccountUsage(accountId: number, source: 'passive' | 'active' = 'active', force = false) {
+  return adminFetch<AccountUsageInfo>(
+    `/api/v1/admin/accounts/${accountId}/usage${buildQuery({
+      source,
+      force,
+    })}`
+  );
 }
 
 function getDefaultTestModel(account: Pick<AdminAccount, 'platform'>, models: AdminAccountModel[]) {

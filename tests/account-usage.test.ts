@@ -6,7 +6,9 @@ import {
   formatDurationFromSeconds,
   formatRelativeTime,
   formatUsageWindowReset,
+  getAccountUsageWindowsFromUsageInfo,
   getAccountUsageWindows,
+  getUsageWindowTone,
   isAccountUsageLimited,
   isUsageWindowLimited,
 } from '../src/lib/account-usage';
@@ -59,6 +61,38 @@ describe('account usage formatting', () => {
     assert.equal(isAccountUsageLimited({ extra: { codex_5h_used_percent: 99, codex_7d_used_percent: 20 } }), false);
     assert.equal(isAccountUsageLimited({ extra: { codex_5h_used_percent: 1, codex_7d_used_percent: 100 } }), true);
     assert.equal(isAccountUsageLimited({ extra: { codex_5h_used_percent: 100 } }), true);
+  });
+
+  it('uses native warning threshold for usage window tone', () => {
+    assert.equal(getUsageWindowTone({ percent: 79 }), 'ok');
+    assert.equal(getUsageWindowTone({ percent: 80 }), 'warning');
+    assert.equal(getUsageWindowTone({ percent: 99 }), 'warning');
+    assert.equal(getUsageWindowTone({ percent: 100 }), 'limited');
+  });
+
+  it('converts active usage query results into display windows', () => {
+    assert.deepEqual(
+      getAccountUsageWindowsFromUsageInfo({
+        five_hour: { utilization: 80.4, remaining_seconds: 3600, resets_at: '2026-06-06T10:00:00+08:00' },
+        seven_day: { utilization: 20 },
+      }),
+      [
+        {
+          key: '5h',
+          label: '5h',
+          percent: 80,
+          resetAfterSeconds: 3600,
+          resetAt: '2026-06-06T10:00:00+08:00',
+        },
+        {
+          key: '7d',
+          label: '7d',
+          percent: 20,
+          resetAfterSeconds: undefined,
+          resetAt: undefined,
+        },
+      ]
+    );
   });
 
   it('formats usage reset durations compactly', () => {
