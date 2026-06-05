@@ -8,10 +8,13 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { LineTrendChart } from '@/src/components/line-trend-chart';
 import {
   API_KEY_USAGE_BATCH_SIZE,
+  buildApiKeyGroupFilterOptions,
+  filterApiKeysByGroup,
   formatIpLocation,
   formatReasoningEffort,
   getApiKeyDailyLimitProgress,
   sortApiKeysByLastUsedDesc,
+  type ApiKeyGroupFilterKey,
 } from '@/src/lib/api-key-usage';
 import {
   getApiKeyUsageSummary,
@@ -503,6 +506,7 @@ export default function UserDetailScreen() {
   const [formError, setFormError] = useState<string | null>(null);
   const [statusError, setStatusError] = useState<string | null>(null);
   const [searchText, setSearchText] = useState('');
+  const [groupFilter, setGroupFilter] = useState<ApiKeyGroupFilterKey>('all');
   const [copiedKeyId, setCopiedKeyId] = useState<number | null>(null);
   const [keyUsageById, setKeyUsageById] = useState<Record<number, ApiKeyUsageSummary>>({});
   const [loadingKeyUsageIds, setLoadingKeyUsageIds] = useState<Record<number, boolean>>({});
@@ -578,7 +582,7 @@ export default function UserDetailScreen() {
   const user = userQuery.data;
   const apiKeys = apiKeysQuery.data?.items ?? [];
 
-  const filteredApiKeys = useMemo(() => {
+  const searchMatchedApiKeys = useMemo(() => {
     const keyword = searchText.trim().toLowerCase();
 
     return sortApiKeysByLastUsedDesc(apiKeys)
@@ -587,7 +591,19 @@ export default function UserDetailScreen() {
         return keyword ? haystack.includes(keyword) : true;
       });
   }, [apiKeys, searchText]);
+  const groupOptions = useMemo(() => buildApiKeyGroupFilterOptions(searchMatchedApiKeys), [searchMatchedApiKeys]);
+  const filteredApiKeys = useMemo(
+    () => filterApiKeysByGroup(searchMatchedApiKeys, groupFilter),
+    [groupFilter, searchMatchedApiKeys]
+  );
+  const selectedGroupOption = groupOptions.find((option) => option.key === groupFilter) ?? groupOptions[0];
   const filteredApiKeyIds = useMemo(() => filteredApiKeys.map((item) => item.id), [filteredApiKeys]);
+
+  useEffect(() => {
+    if (!groupOptions.some((option) => option.key === groupFilter)) {
+      setGroupFilter('all');
+    }
+  }, [groupFilter, groupOptions]);
 
   const latestAccessQuery = useQuery({
     queryKey: ['api-key-latest-access', userId, expandedKeyDetailId],
@@ -892,6 +908,49 @@ export default function UserDetailScreen() {
                 marginBottom: 10,
               }}
             />
+
+            <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 10 }}>
+              {groupOptions.map((option) => {
+                const active = groupFilter === option.key;
+                return (
+                  <Pressable
+                    key={option.key}
+                    onPress={() => setGroupFilter(option.key)}
+                    style={{
+                      backgroundColor: active ? '#7651c8' : colors.border,
+                      borderRadius: 999,
+                      paddingHorizontal: 12,
+                      paddingVertical: 8,
+                    }}
+                  >
+                    <Text
+                      numberOfLines={1}
+                      style={{ maxWidth: 160, fontSize: 12, fontWeight: '700', color: active ? '#fff' : '#4e463e' }}
+                    >
+                      {option.label}({option.count})
+                    </Text>
+                  </Pressable>
+                );
+              })}
+            </View>
+            {selectedGroupOption ? (
+              <View
+                style={{
+                  backgroundColor: colors.muted,
+                  borderRadius: 12,
+                  paddingHorizontal: 12,
+                  paddingVertical: 10,
+                  borderWidth: 1,
+                  borderColor: colors.border,
+                  marginBottom: 10,
+                }}
+              >
+                <Text style={{ fontSize: 12, color: colors.subtext }}>当前分组</Text>
+                <Text style={{ marginTop: 4, fontSize: 14, lineHeight: 20, fontWeight: '700', color: colors.text }}>
+                  {selectedGroupOption.label}({selectedGroupOption.count})
+                </Text>
+              </View>
+            ) : null}
 
             {apiKeysQuery.isLoading ? <Text style={{ color: colors.subtext }}>正在加载 API Keys...</Text> : null}
 

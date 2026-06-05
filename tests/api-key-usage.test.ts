@@ -3,7 +3,9 @@ import { describe, it } from 'node:test';
 
 import {
   aggregateTrendPoints,
+  buildApiKeyGroupFilterOptions,
   buildDailyUsageRows,
+  filterApiKeysByGroup,
   getApiKeyUsageDateRange,
   getApiKeyDailyLimitProgress,
   getTopApiKeyUsageRows,
@@ -158,6 +160,35 @@ describe('api key usage helpers', () => {
       warning: false,
       exceeded: true,
     });
+  });
+
+  it('builds API key group filter options with API key counts', () => {
+    const options = buildApiKeyGroupFilterOptions([
+      { id: 1, group_id: 2, group: { id: 2, name: 'openai-pro', platform: 'openai' } },
+      { id: 2, group_id: 2, group: { id: 2, name: 'openai-pro', platform: 'openai' } },
+      { id: 3, group_id: 5, group: { id: 5, name: 'openai-vip', platform: 'openai' } },
+      { id: 4, group_id: null },
+    ]);
+
+    assert.deepEqual(options, [
+      { key: 'all', label: '全部分组', count: 4 },
+      { key: 'group:2', label: 'openai-pro', count: 2 },
+      { key: 'group:5', label: 'openai-vip', count: 1 },
+      { key: 'ungrouped', label: '未分组', count: 1 },
+    ]);
+  });
+
+  it('filters API keys by selected group', () => {
+    const items = [
+      { id: 1, group_id: 2 },
+      { id: 2, group_id: 2 },
+      { id: 3, group_id: 5 },
+      { id: 4, group_id: null },
+    ];
+
+    assert.deepEqual(filterApiKeysByGroup(items, 'all').map((item) => item.id), [1, 2, 3, 4]);
+    assert.deepEqual(filterApiKeysByGroup(items, 'group:2').map((item) => item.id), [1, 2]);
+    assert.deepEqual(filterApiKeysByGroup(items, 'ungrouped').map((item) => item.id), [4]);
   });
 
   it('sorts top API key usage rows by total cost descending', () => {

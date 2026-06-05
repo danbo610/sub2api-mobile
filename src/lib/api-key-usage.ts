@@ -32,6 +32,14 @@ export type ApiKeyDailyLimitProgress = {
   exceeded: boolean;
 };
 
+export type ApiKeyGroupFilterKey = 'all' | `group:${number}` | 'ungrouped';
+
+export type ApiKeyGroupFilterOption = {
+  key: ApiKeyGroupFilterKey;
+  label: string;
+  count: number;
+};
+
 const emptyUsageTotals: UsageMetricTotals = {
   requests: 0,
   inputTokens: 0,
@@ -65,6 +73,15 @@ function parseDateParam(value: string) {
 
 function normalizeTrendDate(value: string) {
   return value.slice(0, 10) || value;
+}
+
+function getApiKeyGroupId(apiKey: Pick<AdminApiKey, 'group_id' | 'group'>) {
+  const groupId = apiKey.group?.id ?? apiKey.group_id;
+  return typeof groupId === 'number' && Number.isFinite(groupId) && groupId > 0 ? groupId : null;
+}
+
+function getApiKeyGroupLabel(apiKey: Pick<AdminApiKey, 'group_id' | 'group'>, groupId: number) {
+  return apiKey.group?.name?.trim() || `分组${groupId}`;
 }
 
 export function createEmptyUsageTotals(): UsageMetricTotals {
@@ -112,6 +129,61 @@ export function getApiKeyDailyLimitProgress(apiKey: Pick<AdminApiKey, 'rate_limi
     warning: percent >= 90 && percent < 100,
     exceeded: percent >= 100,
   };
+}
+
+export function buildApiKeyGroupFilterOptions<T extends Pick<AdminApiKey, 'group_id' | 'group'>>(items: T[]): ApiKeyGroupFilterOption[] {
+  const grouped = new Map<number, ApiKeyGroupFilterOption & { sortName: string }>();
+  let ungroupedCount = 0;
+
+  items.forEach((item) => {
+    const groupId = getApiKeyGroupId(item);
+
+    if (!groupId) {
+      ungroupedCount += 1;
+      return;
+    }
+
+    const label = getApiKeyGroupLabel(item, groupId);
+    const current = grouped.get(groupId) ?? {
+      key: `group:${groupId}` as const,
+      label,
+      count: 0,
+      sortName: label.toLowerCase(),
+    };
+
+    current.count += 1;
+    if (item.group?.name?.trim()) {
+      current.label = label;
+      current.sortName = label.toLowerCase();
+    }
+    grouped.set(groupId, current);
+  });
+
+  const options: ApiKeyGroupFilterOption[] = [
+    { key: 'all', label: '全部分组', count: items.length },
+    ...[...grouped.values()]
+      .sort((left, right) => left.sortName.localeCompare(right.sortName))
+      .map(({ key, label, count }) => ({ key, label, count })),
+  ];
+
+  if (ungroupedCount > 0) {
+    options.push({ key: 'ungrouped', label: '未分组', count: ungroupedCount });
+  }
+
+  return options;
+}
+
+export function filterApiKeysByGroup<T extends Pick<AdminApiKey, 'group_id' | 'group'>>(items: T[], groupFilter: ApiKeyGroupFilterKey) {
+  if (groupFilter === 'all') {
+    return items;
+  }
+
+  if (groupFilter === 'ungrouped') {
+    return items.filter((item) => !getApiKeyGroupId(item));
+  }
+
+  const groupId = Number(groupFilter.replace('group:', ''));
+  return items.filter((item) => getApiKeyGroupId(item) === groupId);
 }
 
 export function buildDailyUsageRows(points: TrendPoint[], startDate: string, endDate: string): ApiKeyUsageDailyRow[] {
