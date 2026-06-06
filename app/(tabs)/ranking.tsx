@@ -6,6 +6,7 @@ import { Pressable, RefreshControl, ScrollView, Text, View } from 'react-native'
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { ApiKeyUsageRowCard } from '@/src/components/usage/api-key-usage-row-card';
+import { formatRelativeTime } from '@/src/lib/account-usage';
 import {
   API_KEY_USAGE_BATCH_SIZE,
   aggregateTrendPoints,
@@ -357,7 +358,7 @@ function GroupRankingCard({ item, index }: { item: GroupRankingRow; index: numbe
           }
         />
         <GroupMetricCell
-          label="活跃API-Key数/总数"
+          label="活跃AK数/总数"
           value={`${formatInteger(item.activeApiKeyCount)} / ${formatInteger(item.apiKeyCount)}`}
           onPress={() =>
             router.push({
@@ -366,7 +367,7 @@ function GroupRankingCard({ item, index }: { item: GroupRankingRow; index: numbe
             })
           }
         />
-        <GroupMetricCell label="最后使用时间" value={item.lastUsedAt ? formatDisplayTime(item.lastUsedAt) : '--'} />
+        <GroupMetricCell label="最后使用时间" value={formatRelativeTime(item.lastUsedAt)} />
       </View>
     </View>
   );
