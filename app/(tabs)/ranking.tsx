@@ -56,7 +56,9 @@ type GroupRankingRow = UsageMetricTotals & {
   groupId: number | null;
   groupLabel: string;
   aiAccountCount: number;
+  apiKeyCount: number;
   activeApiKeyCount: number;
+  lastUsedAt?: string;
   currentConcurrency: number;
   capacity: number;
 };
@@ -217,7 +219,9 @@ function buildGroupRows(apiKeys: AdminApiKey[], accountRows: AccountRankingRow[]
       groupId: groupId ?? (key.startsWith('group:') ? Number(key.replace('group:', '')) : null),
       groupLabel: label || (key === 'ungrouped' ? '未分组' : `分组${key.replace('group:', '')}`),
       aiAccountCount: 0,
+      apiKeyCount: 0,
       activeApiKeyCount: 0,
+      lastUsedAt: undefined,
       currentConcurrency: 0,
       capacity: 0,
     };
@@ -229,6 +233,14 @@ function buildGroupRows(apiKeys: AdminApiKey[], accountRows: AccountRankingRow[]
     const key = getApiKeyGroupFilterKey(apiKey);
     const groupId = getApiKeyGroupId(apiKey);
     const row = ensureGroup(key, groupId ? getApiKeyGroupLabel(apiKey, groupId) : '未分组', groupId);
+    row.apiKeyCount += 1;
+    if (apiKey.last_used_at) {
+      const currentTime = row.lastUsedAt ? new Date(row.lastUsedAt).getTime() : 0;
+      const nextTime = new Date(apiKey.last_used_at).getTime();
+      if (!Number.isNaN(nextTime) && nextTime > currentTime) {
+        row.lastUsedAt = apiKey.last_used_at;
+      }
+    }
     if (isApiKeyActiveWithin(apiKey, 5, now)) {
       row.activeApiKeyCount += 1;
     }
@@ -286,7 +298,7 @@ function GroupMetricCell({
   const content = (
     <>
       <Text style={{ fontSize: 11, color: colors.subtext }}>{label}</Text>
-      <Text numberOfLines={1} style={{ marginTop: 5, fontSize: 14, fontWeight: '800', color: accent ? colors.accentText : colors.text }}>
+      <Text numberOfLines={2} style={{ marginTop: 5, fontSize: 14, fontWeight: '800', color: accent ? colors.accentText : colors.text }}>
         {value}
       </Text>
     </>
@@ -345,8 +357,8 @@ function GroupRankingCard({ item, index }: { item: GroupRankingRow; index: numbe
           }
         />
         <GroupMetricCell
-          label="活跃API-Key数"
-          value={formatInteger(item.activeApiKeyCount)}
+          label="活跃API-Key数/总数"
+          value={`${formatInteger(item.activeApiKeyCount)} / ${formatInteger(item.apiKeyCount)}`}
           onPress={() =>
             router.push({
               pathname: '/api-keys',
@@ -354,7 +366,7 @@ function GroupRankingCard({ item, index }: { item: GroupRankingRow; index: numbe
             })
           }
         />
-        <GroupMetricCell label="当前并发/容量" value={`${formatInteger(item.currentConcurrency)} / ${formatInteger(item.capacity)}`} />
+        <GroupMetricCell label="最后使用时间" value={item.lastUsedAt ? formatDisplayTime(item.lastUsedAt) : '--'} />
       </View>
     </View>
   );
@@ -364,7 +376,7 @@ export default function RankingScreen() {
   const config = useSnapshot(adminConfigState);
   const hasAccount = hasAuthenticatedAdminSession(config);
   const [rangeKey, setRangeKey] = useState<RankingRangeKey>('today');
-  const [rankingMode, setRankingMode] = useState<RankingMode>('api-key');
+  const [rankingMode, setRankingMode] = useState<RankingMode>('group');
   const [rows, setRows] = useState<RankingRow[]>([]);
   const [progress, setProgress] = useState({ loaded: 0, failed: 0, total: 0 });
   const [accountRows, setAccountRows] = useState<AccountRankingRow[]>([]);
