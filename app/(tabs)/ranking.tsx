@@ -9,27 +9,56 @@ import { ApiKeyUsageRowCard } from '@/src/components/usage/api-key-usage-row-car
 import {
   API_KEY_USAGE_BATCH_SIZE,
   aggregateTrendPoints,
+  createEmptyUsageTotals,
+  getApiKeyGroupFilterKey,
+  getApiKeyGroupId,
+  getApiKeyGroupLabel,
   getApiKeyUsageDateRange,
   getTopApiKeyUsageRows,
   type ApiKeyUsageRange,
   type ApiKeyUsageRangeKey,
+  type ApiKeyGroupFilterKey,
   type UsageMetricTotals,
 } from '@/src/lib/api-key-usage';
 import { formatCost, formatDisplayTime, formatInteger, formatTokenValue } from '@/src/lib/formatters';
-import { getDashboardSnapshot, listAllApiKeys, listAllUserApiKeysFallback } from '@/src/services/admin';
+import { getAccountTodayStats, getDashboardSnapshot, listAllAccounts, listAllApiKeys, listAllUserApiKeysFallback } from '@/src/services/admin';
 import { adminConfigState, hasAuthenticatedAdminSession } from '@/src/store/admin-config';
-import type { AdminApiKey } from '@/src/types/admin';
+import type { AdminAccount, AdminApiKey } from '@/src/types/admin';
 
 const { useSnapshot } = require('valtio/react');
 
 type RankingRangeKey = ApiKeyUsageRangeKey;
+type RankingMode = 'api-key' | 'group';
 
 type RankingRow = UsageMetricTotals & {
   apiKeyId: number;
   apiKeyName: string;
   userId: number;
+  groupFilterKey: ApiKeyGroupFilterKey;
+  groupId: number | null;
   groupLabel?: string;
   lastUsedText?: string;
+};
+
+type AccountGroupInfo = {
+  key: ApiKeyGroupFilterKey;
+  groupId: number | null;
+  label: string;
+};
+
+type AccountRankingRow = UsageMetricTotals & {
+  accountId: number;
+  groups: AccountGroupInfo[];
+};
+
+type GroupRankingRow = UsageMetricTotals & {
+  groupFilterKey: ApiKeyGroupFilterKey;
+  groupId: number | null;
+  groupLabel: string;
+  aiAccountCount: number;
+  activeApiKeyCount: number;
+  currentConcurrency: number;
+  capacity: number;
 };
 
 const colors = {
@@ -72,6 +101,38 @@ function getApiKeyName(item: AdminApiKey) {
   return item.name?.trim() || item.key?.slice(0, 16) || `Key #${item.id}`;
 }
 
+function isApiKeyActiveWithin(apiKey: Pick<AdminApiKey, 'last_used_at'>, minutes: number, now = Date.now()) {
+  if (!apiKey.last_used_at) return false;
+  const time = new Date(apiKey.last_used_at).getTime();
+  if (Number.isNaN(time)) return false;
+  return now - time <= minutes * 60_000;
+}
+
+function getFiniteNumber(value: unknown) {
+  const number = Number(value ?? 0);
+  return Number.isFinite(number) ? number : 0;
+}
+
+function getAccountGroupInfos(account: Pick<AdminAccount, 'groups'>): AccountGroupInfo[] {
+  const groups = account.groups?.filter((group) => group.id && group.name?.trim()) ?? [];
+  return groups.length > 0
+    ? groups.map((group) => ({
+      key: `group:${group.id}` as const,
+      groupId: group.id,
+      label: group.name.trim(),
+    }))
+    : [{ key: 'ungrouped', groupId: null, label: '未分组' }];
+}
+
+function addTotalsToGroup(row: GroupRankingRow, totals: UsageMetricTotals) {
+  row.requests += totals.requests;
+  row.inputTokens += totals.inputTokens;
+  row.cacheReadTokens += totals.cacheReadTokens;
+  row.outputTokens += totals.outputTokens;
+  row.totalTokens += totals.totalTokens;
+  row.cost += totals.cost;
+}
+
 async function loadAllApiKeys() {
   try {
     return await listAllApiKeys();
@@ -99,9 +160,105 @@ async function getApiKeyRankingRow(item: AdminApiKey, range: ApiKeyUsageRange): 
     apiKeyId: item.id,
     apiKeyName: getApiKeyName(item),
     userId,
+    groupFilterKey: getApiKeyGroupFilterKey(item),
+    groupId: getApiKeyGroupId(item),
     groupLabel: item.group?.name,
     lastUsedText: item.last_used_at ? formatDisplayTime(item.last_used_at) : undefined,
   };
+}
+
+async function getAccountRankingRow(account: AdminAccount, rangeKey: RankingRangeKey, range: ApiKeyUsageRange): Promise<AccountRankingRow> {
+  if (rangeKey === 'today') {
+    const stats = await getAccountTodayStats(account.id);
+
+    return {
+      requests: getFiniteNumber(stats.requests),
+      inputTokens: 0,
+      cacheReadTokens: 0,
+      outputTokens: 0,
+      totalTokens: getFiniteNumber(stats.tokens),
+      cost: getFiniteNumber(stats.cost),
+      accountId: account.id,
+      groups: getAccountGroupInfos(account),
+    };
+  }
+
+  const snapshot = await getDashboardSnapshot({
+    ...range,
+    account_id: account.id,
+    include_stats: false,
+    include_trend: true,
+    include_model_stats: false,
+    include_group_stats: false,
+    include_users_trend: false,
+  });
+
+  return {
+    ...aggregateTrendPoints(snapshot.trend ?? []),
+    accountId: account.id,
+    groups: getAccountGroupInfos(account),
+  };
+}
+
+function buildGroupRows(apiKeys: AdminApiKey[], accountRows: AccountRankingRow[], accounts: AdminAccount[]): GroupRankingRow[] {
+  const now = Date.now();
+  const groups = new Map<ApiKeyGroupFilterKey, GroupRankingRow>();
+
+  function ensureGroup(key: ApiKeyGroupFilterKey, label?: string, groupId?: number | null) {
+    const current = groups.get(key);
+    if (current) {
+      if (label && current.groupLabel === '未分组') current.groupLabel = label;
+      return current;
+    }
+
+    const next: GroupRankingRow = {
+      ...createEmptyUsageTotals(),
+      groupFilterKey: key,
+      groupId: groupId ?? (key.startsWith('group:') ? Number(key.replace('group:', '')) : null),
+      groupLabel: label || (key === 'ungrouped' ? '未分组' : `分组${key.replace('group:', '')}`),
+      aiAccountCount: 0,
+      activeApiKeyCount: 0,
+      currentConcurrency: 0,
+      capacity: 0,
+    };
+    groups.set(key, next);
+    return next;
+  }
+
+  apiKeys.forEach((apiKey) => {
+    const key = getApiKeyGroupFilterKey(apiKey);
+    const groupId = getApiKeyGroupId(apiKey);
+    const row = ensureGroup(key, groupId ? getApiKeyGroupLabel(apiKey, groupId) : '未分组', groupId);
+    if (isApiKeyActiveWithin(apiKey, 5, now)) {
+      row.activeApiKeyCount += 1;
+    }
+  });
+
+  accounts.forEach((account) => {
+    getAccountGroupInfos(account).forEach((group) => {
+      const row = ensureGroup(group.key, group.label, group.groupId);
+      row.aiAccountCount += 1;
+      row.currentConcurrency += Number(account.current_concurrency ?? 0);
+      row.capacity += Number(account.concurrency ?? 0);
+    });
+  });
+
+  accountRows.forEach((accountRow) => {
+    accountRow.groups.forEach((group) => {
+      const row = ensureGroup(group.key, group.label, group.groupId);
+      addTotalsToGroup(row, accountRow);
+    });
+  });
+
+  return [...groups.values()]
+    .sort((left, right) => {
+      const costDiff = right.cost - left.cost;
+      if (costDiff !== 0) return costDiff;
+      const requestDiff = right.requests - left.requests;
+      if (requestDiff !== 0) return requestDiff;
+      return right.totalTokens - left.totalTokens;
+    })
+    .slice(0, 20);
 }
 
 function SummaryTile({ label, value, accent }: { label: string; value: string; accent?: boolean }) {
@@ -115,12 +272,103 @@ function SummaryTile({ label, value, accent }: { label: string; value: string; a
   );
 }
 
+function GroupMetricCell({
+  label,
+  value,
+  accent,
+  onPress,
+}: {
+  label: string;
+  value: string;
+  accent?: boolean;
+  onPress?: () => void;
+}) {
+  const content = (
+    <>
+      <Text style={{ fontSize: 11, color: colors.subtext }}>{label}</Text>
+      <Text numberOfLines={1} style={{ marginTop: 5, fontSize: 14, fontWeight: '800', color: accent ? colors.accentText : colors.text }}>
+        {value}
+      </Text>
+    </>
+  );
+  const style = {
+    width: '31.5%' as const,
+    minWidth: 92,
+    backgroundColor: colors.muted,
+    borderRadius: 12,
+    paddingHorizontal: 10,
+    paddingVertical: 10,
+    borderWidth: 1,
+    borderColor: onPress ? colors.primary : colors.border,
+  };
+
+  if (onPress) {
+    return (
+      <Pressable onPress={onPress} style={style}>
+        {content}
+      </Pressable>
+    );
+  }
+
+  return <View style={style}>{content}</View>;
+}
+
+function GroupRankingCard({ item, index }: { item: GroupRankingRow; index: number }) {
+  return (
+    <View style={{ backgroundColor: colors.card, borderRadius: 16, padding: 14, borderWidth: 1, borderColor: colors.border }}>
+      <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', gap: 12 }}>
+        <View style={{ flex: 1 }}>
+          <Text numberOfLines={1} style={{ fontSize: 15, fontWeight: '800', color: colors.text }}>
+            {item.groupLabel}
+          </Text>
+          <Text numberOfLines={1} style={{ marginTop: 4, fontSize: 12, color: colors.subtext }}>
+            当前并发 {formatInteger(item.currentConcurrency)} / {formatInteger(item.capacity)}
+          </Text>
+        </View>
+        <View style={{ backgroundColor: colors.muted, borderRadius: 999, paddingHorizontal: 10, paddingVertical: 6 }}>
+          <Text style={{ fontSize: 11, fontWeight: '800', color: colors.subtext }}>#{index}</Text>
+        </View>
+      </View>
+
+      <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 12 }}>
+        <GroupMetricCell label="总成本" value={formatCost(item.cost)} accent />
+        <GroupMetricCell label="总请求" value={formatInteger(item.requests)} />
+        <GroupMetricCell label="总 Token" value={formatTokenValue(item.totalTokens)} />
+        <GroupMetricCell
+          label="AI账号数"
+          value={formatInteger(item.aiAccountCount)}
+          onPress={() =>
+            router.push({
+              pathname: '/accounts/overview',
+              params: { group: item.groupFilterKey },
+            })
+          }
+        />
+        <GroupMetricCell
+          label="活跃API-Key数"
+          value={formatInteger(item.activeApiKeyCount)}
+          onPress={() =>
+            router.push({
+              pathname: '/api-keys',
+              params: { group: item.groupFilterKey },
+            })
+          }
+        />
+        <GroupMetricCell label="当前并发/容量" value={`${formatInteger(item.currentConcurrency)} / ${formatInteger(item.capacity)}`} />
+      </View>
+    </View>
+  );
+}
+
 export default function RankingScreen() {
   const config = useSnapshot(adminConfigState);
   const hasAccount = hasAuthenticatedAdminSession(config);
   const [rangeKey, setRangeKey] = useState<RankingRangeKey>('today');
+  const [rankingMode, setRankingMode] = useState<RankingMode>('api-key');
   const [rows, setRows] = useState<RankingRow[]>([]);
   const [progress, setProgress] = useState({ loaded: 0, failed: 0, total: 0 });
+  const [accountRows, setAccountRows] = useState<AccountRankingRow[]>([]);
+  const [accountProgress, setAccountProgress] = useState({ loaded: 0, failed: 0, total: 0 });
   const [refreshNonce, setRefreshNonce] = useState(0);
   const range = useMemo(() => getApiKeyUsageDateRange(rangeKey), [rangeKey]);
 
@@ -132,9 +380,16 @@ export default function RankingScreen() {
   });
 
   const apiKeys = useMemo(() => apiKeysQuery.data ?? [], [apiKeysQuery.data]);
+  const accountsQuery = useQuery({
+    queryKey: ['ranking-accounts'],
+    queryFn: () => listAllAccounts(),
+    enabled: hasAccount && rankingMode === 'group',
+    staleTime: 60_000,
+  });
+  const accounts = useMemo(() => accountsQuery.data ?? [], [accountsQuery.data]);
 
   useEffect(() => {
-    if (!hasAccount || apiKeys.length === 0) {
+    if (!hasAccount || rankingMode !== 'api-key' || apiKeys.length === 0) {
       setRows([]);
       setProgress({ loaded: 0, failed: 0, total: 0 });
       return;
@@ -172,12 +427,55 @@ export default function RankingScreen() {
     return () => {
       cancelled = true;
     };
-  }, [apiKeys, hasAccount, range, refreshNonce]);
+  }, [apiKeys, hasAccount, range, rankingMode, refreshNonce]);
+
+  useEffect(() => {
+    if (!hasAccount || rankingMode !== 'group' || accounts.length === 0) {
+      setAccountRows([]);
+      setAccountProgress({ loaded: 0, failed: 0, total: 0 });
+      return;
+    }
+
+    let cancelled = false;
+    setAccountRows([]);
+    setAccountProgress({ loaded: 0, failed: 0, total: accounts.length });
+
+    async function loadAccountUsageBatches() {
+      for (let start = 0; start < accounts.length; start += API_KEY_USAGE_BATCH_SIZE) {
+        if (cancelled) return;
+
+        const batch = accounts.slice(start, start + API_KEY_USAGE_BATCH_SIZE);
+        const results = await Promise.allSettled(batch.map((account) => getAccountRankingRow(account, rangeKey, range)));
+
+        if (cancelled) return;
+
+        const fulfilled = results
+          .filter((result): result is PromiseFulfilledResult<AccountRankingRow> => result.status === 'fulfilled')
+          .map((result) => result.value);
+        const failed = results.length - fulfilled.length;
+
+        setAccountRows((current) => [...current, ...fulfilled]);
+        setAccountProgress((current) => ({
+          total: accounts.length,
+          loaded: current.loaded + results.length,
+          failed: current.failed + failed,
+        }));
+      }
+    }
+
+    void loadAccountUsageBatches();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [accounts, hasAccount, range, rangeKey, rankingMode, refreshNonce]);
 
   const topRows = useMemo(() => getTopApiKeyUsageRows(rows, 20), [rows]);
+  const topGroupRows = useMemo(() => buildGroupRows(apiKeys, accountRows, accounts), [accountRows, accounts, apiKeys]);
   const totals = useMemo(
-    () =>
-      rows.reduce(
+    () => {
+      const sourceRows: UsageMetricTotals[] = rankingMode === 'group' ? accountRows : rows;
+      return sourceRows.reduce(
         (sum, item) => ({
           requests: sum.requests + item.requests,
           inputTokens: sum.inputTokens + item.inputTokens,
@@ -187,18 +485,26 @@ export default function RankingScreen() {
           cost: sum.cost + item.cost,
         }),
         { requests: 0, inputTokens: 0, cacheReadTokens: 0, outputTokens: 0, totalTokens: 0, cost: 0 }
-      ),
-    [rows]
+      );
+    },
+    [accountRows, rankingMode, rows]
   );
   const isUsageLoading = progress.total > 0 && progress.loaded < progress.total;
-  const isRefreshing = apiKeysQuery.isRefetching || isUsageLoading;
-  const loadingText = progress.total > 0 ? `已统计 ${progress.loaded}/${progress.total} 个 API Key` : '正在准备排行榜数据...';
+  const isAccountUsageLoading = accountProgress.total > 0 && accountProgress.loaded < accountProgress.total;
+  const isRefreshing = apiKeysQuery.isRefetching || accountsQuery.isRefetching || isUsageLoading || isAccountUsageLoading;
+  const activeProgress = rankingMode === 'group' ? accountProgress : progress;
+  const loadingText = activeProgress.total > 0
+    ? `已统计 ${activeProgress.loaded}/${activeProgress.total} 个 ${rankingMode === 'group' ? 'AI账号' : 'API Key'}`
+    : '正在准备排行榜数据...';
 
   function refreshAll() {
     setRows([]);
     setProgress({ loaded: 0, failed: 0, total: 0 });
+    setAccountRows([]);
+    setAccountProgress({ loaded: 0, failed: 0, total: 0 });
     setRefreshNonce((value) => value + 1);
     void apiKeysQuery.refetch();
+    void accountsQuery.refetch();
   }
 
   return (
@@ -212,7 +518,7 @@ export default function RankingScreen() {
         <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', gap: 12, marginBottom: 14 }}>
           <View style={{ flex: 1 }}>
             <Text style={{ fontSize: 28, fontWeight: '800', color: colors.text }}>排行榜</Text>
-            <Text style={{ marginTop: 6, fontSize: 13, color: '#8a8072' }}>按 API Key 总成本排序的 Top 20。</Text>
+            <Text style={{ marginTop: 6, fontSize: 13, color: '#8a8072' }}>按总成本排序的 Top 20。</Text>
           </View>
           <Pressable
             onPress={() => router.push('/settings')}
@@ -220,6 +526,31 @@ export default function RankingScreen() {
           >
             <Settings2 color={colors.text} size={20} />
           </Pressable>
+        </View>
+
+        <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 12 }}>
+          {([
+            ['api-key', 'API-Key'],
+            ['group', '分组'],
+          ] as const).map(([key, label]) => {
+            const active = rankingMode === key;
+            return (
+              <Pressable
+                key={key}
+                onPress={() => setRankingMode(key)}
+                style={{
+                  backgroundColor: active ? colors.primary : colors.card,
+                  borderRadius: 999,
+                  paddingHorizontal: 13,
+                  paddingVertical: 9,
+                  borderWidth: 1,
+                  borderColor: active ? colors.primary : colors.border,
+                }}
+              >
+                <Text style={{ color: active ? '#fff' : colors.text, fontSize: 12, fontWeight: '800' }}>{label}</Text>
+              </Pressable>
+            );
+          })}
         </View>
 
         <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 12 }}>
@@ -263,7 +594,7 @@ export default function RankingScreen() {
               <Text style={{ fontSize: 17, fontWeight: '800', color: colors.text }}>当前时段</Text>
               <Text style={{ marginTop: 6, fontSize: 12, color: colors.subtext }}>
                 {range.start_date} 到 {range.end_date} · {loadingText}
-                {progress.failed ? ` · 失败 ${progress.failed}` : ''}
+                {activeProgress.failed ? ` · 失败 ${activeProgress.failed}` : ''}
               </Text>
               <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 12 }}>
                 <SummaryTile label="总成本" value={formatCost(totals.cost)} accent />
@@ -278,29 +609,49 @@ export default function RankingScreen() {
               </View>
             ) : null}
 
-            {apiKeysQuery.error ? (
-              <View style={{ backgroundColor: colors.dangerBg, borderRadius: 16, padding: 14 }}>
-                <Text style={{ fontSize: 15, fontWeight: '800', color: colors.danger }}>API Key 清单加载失败</Text>
-                <Text style={{ marginTop: 6, fontSize: 13, lineHeight: 20, color: colors.danger }}>{getErrorMessage(apiKeysQuery.error)}</Text>
+            {rankingMode === 'group' && accountsQuery.isLoading ? (
+              <View style={{ backgroundColor: colors.card, borderRadius: 18, padding: 16, marginBottom: 12 }}>
+                <Text style={{ color: colors.subtext }}>正在加载分组账号统计...</Text>
               </View>
             ) : null}
 
-            {!apiKeysQuery.isLoading && !apiKeysQuery.error ? (
-              topRows.length > 0 ? (
+            {apiKeysQuery.error || (rankingMode === 'group' && accountsQuery.error) ? (
+              <View style={{ backgroundColor: colors.dangerBg, borderRadius: 16, padding: 14 }}>
+                <Text style={{ fontSize: 15, fontWeight: '800', color: colors.danger }}>排行榜数据加载失败</Text>
+                <Text style={{ marginTop: 6, fontSize: 13, lineHeight: 20, color: colors.danger }}>
+                  {getErrorMessage(apiKeysQuery.error ?? accountsQuery.error)}
+                </Text>
+              </View>
+            ) : null}
+
+            {!apiKeysQuery.isLoading && !apiKeysQuery.error && !(rankingMode === 'group' && accountsQuery.error) ? (
+              rankingMode === 'api-key' ? (
+                topRows.length > 0 ? (
+                  <View style={{ gap: 10 }}>
+                    {topRows.map((item, index) => (
+                      <ApiKeyUsageRowCard
+                        key={item.apiKeyId}
+                        index={index + 1}
+                        title={item.apiKeyName}
+                        subtitleLines={[item.groupLabel, item.lastUsedText].filter(Boolean) as string[]}
+                        totals={item}
+                      />
+                    ))}
+                  </View>
+                ) : (
+                  <View style={{ backgroundColor: colors.card, borderRadius: 18, padding: 16 }}>
+                    <Text style={{ color: colors.subtext }}>{isUsageLoading ? '正在计算排行榜...' : '当前时段没有 API Key 消费数据。'}</Text>
+                  </View>
+                )
+              ) : topGroupRows.length > 0 ? (
                 <View style={{ gap: 10 }}>
-                  {topRows.map((item, index) => (
-                    <ApiKeyUsageRowCard
-                      key={item.apiKeyId}
-                      index={index + 1}
-                      title={item.apiKeyName}
-                      subtitle={[item.groupLabel, item.lastUsedText].filter(Boolean).join(' · ')}
-                      totals={item}
-                    />
+                  {topGroupRows.map((item, index) => (
+                    <GroupRankingCard key={item.groupFilterKey} item={item} index={index + 1} />
                   ))}
                 </View>
               ) : (
                 <View style={{ backgroundColor: colors.card, borderRadius: 18, padding: 16 }}>
-                  <Text style={{ color: colors.subtext }}>{isUsageLoading ? '正在计算排行榜...' : '当前时段没有 API Key 消费数据。'}</Text>
+                  <Text style={{ color: colors.subtext }}>{isAccountUsageLoading ? '正在计算分组排行榜...' : '当前时段没有分组消费数据。'}</Text>
                 </View>
               )
             ) : null}

@@ -72,6 +72,20 @@ function isOpenAIOAuthAccount(account: Pick<AdminAccount, 'platform' | 'type'>) 
   return account.platform === 'openai' && account.type === 'oauth';
 }
 
+function parseAccountGroupFilter(value: unknown): GroupFilterKey {
+  const rawValue = Array.isArray(value) ? value[0] : value;
+
+  if (rawValue === 'all' || rawValue === 'ungrouped') {
+    return rawValue;
+  }
+
+  if (typeof rawValue === 'string' && /^group:\d+$/.test(rawValue)) {
+    return rawValue as `group:${number}`;
+  }
+
+  return 'all';
+}
+
 function AccountTestResultPanel({ result }: { result: AccountTestResult }) {
   return (
     <View className="rounded-[14px] bg-[#111827] px-3 py-3">
@@ -89,11 +103,12 @@ function AccountTestResultPanel({ result }: { result: AccountTestResult }) {
 }
 
 export function AccountsListScreen({ safeAreaEdges }: AccountsListScreenProps) {
-  const { filter: routeFilter } = useLocalSearchParams<{ filter?: string | string[] }>();
+  const { filter: routeFilter, group: routeGroup } = useLocalSearchParams<{ filter?: string | string[]; group?: string | string[] }>();
+  const routeGroupFilter = useMemo(() => parseAccountGroupFilter(routeGroup), [routeGroup]);
   const [searchText, setSearchText] = useState('');
   const [filter, setFilter] = useState<AccountStatusFilter>(() => parseAccountStatusFilter(routeFilter));
   const [usageSort, setUsageSort] = useState<UsageSort>('usage-desc');
-  const [groupFilter, setGroupFilter] = useState<GroupFilterKey>('all');
+  const [groupFilter, setGroupFilter] = useState<GroupFilterKey>(() => routeGroupFilter);
   const [testingAccountId, setTestingAccountId] = useState<number | null>(null);
   const [testFeedbackByAccountId, setTestFeedbackByAccountId] = useState<Record<number, AccountTestResult>>({});
   const [togglingAccountId, setTogglingAccountId] = useState<number | null>(null);
@@ -151,6 +166,10 @@ export function AccountsListScreen({ safeAreaEdges }: AccountsListScreenProps) {
   useEffect(() => {
     setFilter(parseAccountStatusFilter(routeFilter));
   }, [routeFilter]);
+
+  useEffect(() => {
+    setGroupFilter(routeGroupFilter);
+  }, [routeGroupFilter]);
 
   const accountsQuery = useQuery({
     queryKey: ['accounts', keyword],
@@ -245,10 +264,13 @@ export function AccountsListScreen({ safeAreaEdges }: AccountsListScreenProps) {
   }, [statusMatchedItems]);
 
   useEffect(() => {
+    if (accountsQuery.isLoading || accountsQuery.isFetching) {
+      return;
+    }
     if (!groupOptions.some((option) => option.key === groupFilter)) {
       setGroupFilter('all');
     }
-  }, [groupFilter, groupOptions]);
+  }, [accountsQuery.isFetching, accountsQuery.isLoading, groupFilter, groupOptions]);
 
   const filteredItems = useMemo(() => {
     const groupMatched = statusMatchedItems.filter((account) => {

@@ -64,6 +64,19 @@ export default function RootLayout() {
               }}
             />
             <Stack.Screen
+              name="api-keys/index"
+              options={{
+                animation: 'slide_from_right',
+                presentation: 'card',
+                headerShown: true,
+                title: 'API Keys',
+                headerBackTitle: '返回',
+                headerTintColor: '#16181a',
+                headerStyle: { backgroundColor: '#f4efe4' },
+                headerShadowVisible: false,
+              }}
+            />
+            <Stack.Screen
               name="users/create-account"
               options={{
                 animation: 'slide_from_right',

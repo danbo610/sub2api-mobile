@@ -332,7 +332,7 @@ export function listAccountsPage(params: { page?: number; page_size?: number; se
 }
 
 export function listAccounts(search = '') {
-  return listAccountsPage({ page: 1, page_size: 20, search });
+  return listAccountsPage({ page: 1, page_size: 1000, search });
 }
 
 export async function listAllAccounts(search = '') {

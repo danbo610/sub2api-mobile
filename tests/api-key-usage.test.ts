@@ -11,6 +11,7 @@ import {
   getTopApiKeyUsageRows,
   formatIpLocation,
   formatReasoningEffort,
+  parseApiKeyGroupFilter,
   sortApiKeysByLastUsedDesc,
   toTimeValue,
 } from '../src/lib/api-key-usage';
@@ -189,6 +190,13 @@ describe('api key usage helpers', () => {
     assert.deepEqual(filterApiKeysByGroup(items, 'all').map((item) => item.id), [1, 2, 3, 4]);
     assert.deepEqual(filterApiKeysByGroup(items, 'group:2').map((item) => item.id), [1, 2]);
     assert.deepEqual(filterApiKeysByGroup(items, 'ungrouped').map((item) => item.id), [4]);
+  });
+
+  it('parses API key group filter route params safely', () => {
+    assert.equal(parseApiKeyGroupFilter('group:2'), 'group:2');
+    assert.equal(parseApiKeyGroupFilter(['ungrouped']), 'ungrouped');
+    assert.equal(parseApiKeyGroupFilter('bad'), 'all');
+    assert.equal(parseApiKeyGroupFilter('group:abc'), 'all');
   });
 
   it('sorts top API key usage rows by total cost descending', () => {

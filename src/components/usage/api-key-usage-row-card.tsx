@@ -37,14 +37,18 @@ function MetricCell({ label, value, accent }: { label: string; value: string; ac
 export function ApiKeyUsageRowCard({
   title,
   subtitle,
+  subtitleLines,
   totals,
   index,
 }: {
   title: string;
   subtitle?: string;
+  subtitleLines?: string[];
   totals: UsageMetricTotals;
   index?: number;
 }) {
+  const visibleSubtitleLines = subtitleLines?.filter(Boolean) ?? [];
+
   return (
     <View
       style={{
@@ -60,7 +64,17 @@ export function ApiKeyUsageRowCard({
           <Text numberOfLines={1} style={{ fontSize: 15, fontWeight: '800', color: colors.text }}>
             {title}
           </Text>
-          {subtitle ? <Text numberOfLines={1} style={{ marginTop: 4, fontSize: 12, color: colors.subtext }}>{subtitle}</Text> : null}
+          {visibleSubtitleLines.length > 0 ? (
+            <View style={{ marginTop: 4, gap: 2 }}>
+              {visibleSubtitleLines.map((line) => (
+                <Text key={line} numberOfLines={1} style={{ fontSize: 12, color: colors.subtext }}>
+                  {line}
+                </Text>
+              ))}
+            </View>
+          ) : subtitle ? (
+            <Text numberOfLines={1} style={{ marginTop: 4, fontSize: 12, color: colors.subtext }}>{subtitle}</Text>
+          ) : null}
         </View>
         {typeof index === 'number' ? (
           <View style={{ backgroundColor: colors.muted, borderRadius: 999, paddingHorizontal: 10, paddingVertical: 6 }}>

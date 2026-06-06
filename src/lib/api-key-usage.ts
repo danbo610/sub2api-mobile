@@ -75,13 +75,32 @@ function normalizeTrendDate(value: string) {
   return value.slice(0, 10) || value;
 }
 
-function getApiKeyGroupId(apiKey: Pick<AdminApiKey, 'group_id' | 'group'>) {
+export function getApiKeyGroupId(apiKey: Pick<AdminApiKey, 'group_id' | 'group'>) {
   const groupId = apiKey.group?.id ?? apiKey.group_id;
   return typeof groupId === 'number' && Number.isFinite(groupId) && groupId > 0 ? groupId : null;
 }
 
-function getApiKeyGroupLabel(apiKey: Pick<AdminApiKey, 'group_id' | 'group'>, groupId: number) {
+export function getApiKeyGroupLabel(apiKey: Pick<AdminApiKey, 'group_id' | 'group'>, groupId: number) {
   return apiKey.group?.name?.trim() || `分组${groupId}`;
+}
+
+export function getApiKeyGroupFilterKey(apiKey: Pick<AdminApiKey, 'group_id' | 'group'>): ApiKeyGroupFilterKey {
+  const groupId = getApiKeyGroupId(apiKey);
+  return groupId ? `group:${groupId}` : 'ungrouped';
+}
+
+export function parseApiKeyGroupFilter(value: unknown): ApiKeyGroupFilterKey {
+  const rawValue = Array.isArray(value) ? value[0] : value;
+
+  if (rawValue === 'all' || rawValue === 'ungrouped') {
+    return rawValue;
+  }
+
+  if (typeof rawValue === 'string' && /^group:\d+$/.test(rawValue)) {
+    return rawValue as `group:${number}`;
+  }
+
+  return 'all';
 }
 
 export function createEmptyUsageTotals(): UsageMetricTotals {
